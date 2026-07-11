@@ -1,0 +1,33 @@
+name: avalon
+
+services:
+  web:
+    build:
+      context: .
+      target: production
+      args:
+        PNPM_VERSION: 11.7.0
+    init: true
+    restart: unless-stopped
+    ports:
+      - "80:4173"
+    environment:
+      NODE_ENV: production
+      PORT: "4173"
+      ROOM_TTL_HOURS: "${ROOM_TTL_HOURS:-24}"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4173/api/health').then((response) => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    stop_grace_period: 10s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

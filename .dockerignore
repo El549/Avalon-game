@@ -1,0 +1,15 @@
+.git
+.gitignore
+.env
+.env.*
+.DS_Store
+.pnpm-store
+node_modules
+dist
+dist-server
+coverage
+playwright-report
+test-results
+product
+tests
+*.log
