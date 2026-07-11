@@ -68,6 +68,83 @@ describe("房间接口与实时连接", () => {
     socket.disconnect();
   });
 
+  it("队长选人实时同步，任务票由队长确认并由服务端三秒后揭晓", async () => {
+    application = createServerApplication(new RoomStore(60_000, () => 0.10101, Date.now));
+    await new Promise<void>((resolve) => application!.httpServer.listen(0, "127.0.0.1", resolve));
+    const address = application.httpServer.address();
+    if (!address || typeof address === "string") throw new Error("测试服务未启动");
+    const origin = `http://127.0.0.1:${address.port}`;
+    const created = await request(application.app).post("/api/rooms").send({ nickname: "房主", playerCount: 5, rolePreset: "classic", rejectionRule: "evil-wins" });
+    const credentials = [created.body.data.credentials];
+    for (let seat = 2; seat <= 5; seat += 1) {
+      const joined = await request(application.app).post(`/api/rooms/${credentials[0].roomCode}/join`).send({ nickname: `玩家${seat}`, seat });
+      credentials.push(joined.body.data.credentials);
+    }
+    const room = application.store.getRoom(credentials[0].roomCode);
+    for (const session of credentials) {
+      room.setConnected(session.playerId, true);
+      room.setReady(session.playerId, true);
+    }
+    room.startGame(credentials[0].playerId);
+    for (const session of credentials) room.confirmIdentity(session.playerId);
+    expect(room.publicState().leaderSeat).toBe(1);
+
+    const connect = async (auth: Record<string, unknown>) => {
+      const socket = createClient(origin, { auth, transports: ["websocket"] });
+      await new Promise<void>((resolve, reject) => {
+        socket.once("connect", resolve);
+        socket.once("connect_error", reject);
+      });
+      return socket;
+    };
+    const host = await connect({ roomCode: credentials[0].roomCode, token: credentials[0].token, mode: "player" });
+    const observer = await connect({ roomCode: credentials[0].roomCode, token: credentials[1].token, mode: "player" });
+    const board = await connect({ roomCode: credentials[0].roomCode, mode: "board" });
+    const waitForPublic = (socket: ClientSocket, predicate: (state: any) => boolean) => new Promise<any>((resolve) => {
+      const listener = (state: any) => {
+        if (!predicate(state)) return;
+        socket.off("room:public", listener);
+        resolve(state);
+      };
+      socket.on("room:public", listener);
+    });
+
+    const firstPickOnObserver = waitForPublic(observer, (state) => state.phase === "team-building" && state.draftTeam.length === 1);
+    const firstPickOnBoard = waitForPublic(board, (state) => state.phase === "team-building" && state.draftTeam.length === 1);
+    expect((await new Promise<any>((resolve) => host.emit("team:draft-toggle", credentials[0].playerId, resolve))).ok).toBe(true);
+    await expect(firstPickOnObserver).resolves.toMatchObject({ phase: "team-building", draftTeam: [credentials[0].playerId] });
+    await expect(firstPickOnBoard).resolves.toMatchObject({ phase: "team-building", draftTeam: [credentials[0].playerId] });
+
+    const team = [credentials[0].playerId, credentials[1].playerId];
+    const fullDraft = waitForPublic(observer, (state) => state.phase === "team-building" && state.draftTeam.length === 2);
+    await new Promise<any>((resolve) => host.emit("team:draft-toggle", credentials[1].playerId, resolve));
+    await expect(fullDraft).resolves.toMatchObject({ draftTeam: team });
+    const voting = waitForPublic(observer, (state) => state.phase === "team-voting");
+    await new Promise<any>((resolve) => host.emit("team:propose", team, resolve));
+    await voting;
+    expect((await new Promise<any>((resolve) => host.emit("team-vote:record", 0, resolve))).ok).toBe(true);
+
+    await new Promise<any>((resolve) => host.emit("quest:submit", "success", resolve));
+    const ready = waitForPublic(observer, (state) => state.phase === "quest-ready");
+    await new Promise<any>((resolve) => observer.emit("quest:submit", "success", resolve));
+    await expect(ready).resolves.toMatchObject({ phase: "quest-ready", lastQuestResult: null });
+    expect((await new Promise<any>((resolve) => observer.emit("quest:reveal", resolve))).ok).toBe(false);
+
+    const revealing = waitForPublic(board, (state) => state.phase === "quest-revealing");
+    const revealAck = await new Promise<any>((resolve) => host.emit("quest:reveal", resolve));
+    expect(revealAck).toMatchObject({ ok: true, data: { durationMs: 3_000 } });
+    await expect(revealing).resolves.toMatchObject({ phase: "quest-revealing", lastQuestResult: null });
+    host.disconnect();
+    observer.disconnect();
+
+    const result = await waitForPublic(board, (state) => state.phase === "quest-result");
+    expect(result.lastQuestResult).toMatchObject({ outcome: "success", failCount: 0 });
+    await request(origin).get(`/api/rooms/${credentials[0].roomCode}/public`).expect(200).expect((response) => {
+      expect(response.body.data.phase).toBe("quest-result");
+    });
+    board.disconnect();
+  }, 10_000);
+
   it("实时操作不带回执时仍能完成，服务保持可用", async () => {
     application = createServerApplication(new RoomStore(60_000, () => 0.373737, () => 1_000));
     await new Promise<void>((resolve) => application!.httpServer.listen(0, "127.0.0.1", resolve));

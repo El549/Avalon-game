@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { PublicRoomState, RejectionRule, RolePreset } from "@shared/contracts";
-import { createExperienceRoom, createRoom, getPublicRoom, joinRoom } from "./api";
+import { ApiError, createExperienceRoom, createRoom, getPublicRoom, getSession, joinRoom } from "./api";
 import { Brand } from "./components/Brand";
 import { RoundTable } from "./components/RoundTable";
-import { loadCredentials, saveCredentials } from "./session";
+import { clearCredentials, loadCredentials, loadLatestCredentials, saveCredentials } from "./session";
 
 type Mode = "create" | "join" | "experience";
 
@@ -15,6 +15,8 @@ export function Home() {
     if (value === "left") return "你已离开桌局，原座位已经释放。";
     if (value === "dissolved") return "原桌局已解散，可以重新创建。";
     if (value === "unavailable") return "原桌局已经结束或失效，可以重新创建或加入其他桌局。";
+    if (value === "removed") return "你已被房主移出原桌局，可以加入其他房间。";
+    if (value === "session-invalid") return "原座位已被释放或身份已经失效，请重新选择空座位加入。";
     return null;
   }, [searchParams]);
   const [mode, setMode] = useState<Mode>(initialCode ? "join" : "create");
@@ -27,7 +29,34 @@ export function Home() {
   const [seat, setSeat] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [latestSession, setLatestSession] = useState(() => initialCode ? null : loadLatestCredentials());
+  const [latestRoom, setLatestRoom] = useState<PublicRoomState | null>(null);
+  const [latestRoomError, setLatestRoomError] = useState<string | null>(null);
   const existingSession = roomCode.length === 6 ? loadCredentials(roomCode) : null;
+
+  useEffect(() => {
+    if (!latestSession) return;
+    let cancelled = false;
+    void getSession(latestSession).then((snapshot) => {
+      if (!cancelled) {
+        setLatestRoom(snapshot.public);
+        setLatestRoomError(null);
+      }
+    }).catch((cause: unknown) => {
+      const sessionIsInvalid = cause instanceof ApiError
+        && (cause.status === 401 || cause.status === 404 || cause.code === "INVALID_SESSION" || cause.code === "ROOM_NOT_FOUND");
+      if (sessionIsInvalid) clearCredentials(latestSession.roomCode);
+      if (!cancelled) {
+        if (sessionIsInvalid) {
+          setLatestSession(null);
+          setLatestRoom(null);
+        } else {
+          setLatestRoomError("暂时无法确认房间状态，仍可尝试返回");
+        }
+      }
+    });
+    return () => { cancelled = true; };
+  }, [latestSession]);
 
   const lookupRoom = useCallback(async (code = roomCode) => {
     if (code.length !== 6) {
@@ -131,6 +160,17 @@ export function Home() {
       </nav>
 
       {notice && <p className="entry-notice" role="status">{notice}</p>}
+      {latestSession && (
+        <button type="button" className="latest-session-card" onClick={() => window.location.assign(`/room/${latestSession.roomCode}`)}>
+          <span>继续上次桌局</span>
+          <strong>{latestRoom?.name ?? "上次桌局"}</strong>
+          <small>
+            房间号 {formatRoomCode(latestSession.roomCode)}
+            {latestRoom && ` · ${latestRoom.players.find((player) => player.id === latestSession.playerId)?.seat}号座位`}
+            {latestRoomError && ` · ${latestRoomError}`}
+          </small>
+        </button>
+      )}
 
       {mode === "create" ? (
         <form className="entry-form" onSubmit={submitCreate}>
@@ -278,4 +318,8 @@ function ChoiceRow({
       ))}
     </div>
   );
+}
+
+function formatRoomCode(code: string): string {
+  return `${code.slice(0, 3)} ${code.slice(3)}`;
 }

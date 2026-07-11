@@ -12,14 +12,28 @@ import { useRoomSocket } from "./useRoomSocket";
 export function PlayerRoom({ roomCode }: { roomCode: string }) {
   const credentials = useMemo(() => loadCredentials(roomCode), [roomCode]);
   const { publicState, privateState, connected, error, closedNotice, command, clearError } = useRoomSocket(roomCode, "player", credentials);
+  const [showHostControls, setShowHostControls] = useState(false);
 
   useEffect(() => {
     if (!closedNotice) return;
     clearCredentials(roomCode);
-    window.location.assign(`/?notice=${closedNotice}`);
+    window.location.assign(
+      closedNotice === "session-invalid"
+        ? `/?room=${roomCode}&notice=session-invalid`
+        : `/?notice=${closedNotice}`,
+    );
   }, [closedNotice, roomCode]);
 
   if (!credentials) return <SessionMissing roomCode={roomCode} />;
+  if (closedNotice) {
+    return (
+      <main className="loading-screen">
+        <Brand />
+        <div className="loading-seal" aria-hidden="true" />
+        <p>正在返回首页…</p>
+      </main>
+    );
+  }
   if (!publicState || !privateState) {
     return (
       <main className="loading-screen">
@@ -31,27 +45,38 @@ export function PlayerRoom({ roomCode }: { roomCode: string }) {
     );
   }
 
-  const me = publicState.players.find((player) => player.id === privateState.playerId)!;
+  const me = publicState.players.find((player) => player.id === privateState.playerId);
+  if (!me) {
+    return (
+      <main className="loading-screen">
+        <Brand />
+        <div className="loading-seal" aria-hidden="true" />
+        <p>正在更新座位状态…</p>
+      </main>
+    );
+  }
   return (
     <div className="player-shell">
       <header className="player-topbar">
         <Brand compact />
-        <div>
+        <div className="player-topbar__room">
           <span>{publicState.name}</span>
           <b>{formatRoomCode(publicState.code)}</b>
+          {publicState.settings.mode === "experience" && <small>流程体验</small>}
         </div>
+        {me.isHost && <button type="button" className="host-controls-trigger" onClick={() => setShowHostControls(true)}>房主管理</button>}
       </header>
       <ConnectionNotice connected={connected} error={error} />
       {error && <button type="button" className="dismiss-error" aria-label="关闭错误提示" onClick={clearError}>×</button>}
-      {publicState.settings.mode === "experience" && (
-        <aside className="experience-strip">完整流程体验 · 三名模拟玩家会自动完成其余操作</aside>
-      )}
       <PlayerPhase
         room={publicState}
         privateState={privateState}
         me={me}
         command={command}
       />
+      {me.isHost && showHostControls && (
+        <HostControls room={publicState} command={command} onClose={() => setShowHostControls(false)} />
+      )}
     </div>
   );
 }
@@ -82,13 +107,30 @@ function PlayerPhase({
       return <PublicVote room={room} privateState={privateState} command={command} />;
     case "quest-voting":
       return privateState.canSubmitQuest && privateState.faction ? (
-        <QuestBallot missionNumber={room.missionIndex + 1} faction={privateState.faction} onSubmit={(vote) => command("quest:submit", vote)} />
+        <QuestBallot
+          missionNumber={room.missionIndex + 1}
+          faction={privateState.faction}
+          orderKey={`${room.code}:${privateState.playerId}:${room.missionIndex}`}
+          onSubmit={(vote) => command("quest:submit", vote)}
+        />
       ) : (
         <WaitingPanel
           title={privateState.questVoteSubmitted ? "任务票已封存" : "等待任务结果"}
           copy={privateState.questVoteSubmitted ? "你的选择已经匿名提交" : "本轮任务队员正在秘密选择"}
           hint="请放下手机，观察桌上的其他人。"
         />
+      );
+    case "quest-ready":
+      return privateState.canRevealQuest ? (
+        <QuestRevealControl room={room} command={command} />
+      ) : (
+        <WaitingPanel title="任务票已全部封存" copy="等待本轮队长确认揭晓" hint="任务结果仍然保密。" />
+      );
+    case "quest-revealing":
+      return me.seat === room.leaderSeat ? (
+        <QuestRevealCountdown room={room} />
+      ) : (
+        <WaitingPanel title="任务结果即将揭晓" copy="本轮队长正在开启任务票" hint="请观察现场反应。" />
       );
     case "quest-result":
       return privateState.canContinueAfterQuest ? (
@@ -116,7 +158,6 @@ function Lobby({
   const [exitAction, setExitAction] = useState<"leave" | "dissolve" | null>(null);
   const [exiting, setExiting] = useState(false);
   const everyoneReady = room.players.length === room.settings.playerCount && room.players.every((player) => player.ready && player.connected);
-  const joinUrl = `${window.location.origin}/?room=${room.code}`;
   const isExperience = room.settings.mode === "experience";
   const openSeats = Array.from({ length: room.settings.playerCount }, (_, index) => index + 1)
     .filter((seat) => !room.players.some((player) => player.seat === seat));
@@ -142,8 +183,8 @@ function Lobby({
       <RoundTable players={room.players} playerCount={room.settings.playerCount} currentPlayerId={me.id} />
       {isExperience && (
         <div className="experience-lobby-note">
-          <strong>第二台手机请扫码加入 2 号位</strong>
-          <span>两位真人准备后即可开始，模拟玩家已经就位。</span>
+          <strong>第二台手机加入 2 号位</strong>
+          <span>房主打开“房主管理 → 邀请玩家”让它扫码；两位真人准备后即可开始。</span>
         </div>
       )}
       <div className="lobby-status" aria-label="准备状态">
@@ -168,6 +209,7 @@ function Lobby({
             ))}
           </div>
           <span>换座后需要重新确认准备。</span>
+          <button type="button" className="text-link" onClick={() => setChangingSeat(false)}>取消换座</button>
         </div>
       )}
       {!isExperience && openSeats.length > 0 && (
@@ -175,7 +217,6 @@ function Lobby({
           {changingSeat ? "取消换座" : "换一个座位"}
         </button>
       )}
-      {me.isHost && <QrCode value={joinUrl} label={isExperience ? "第二台手机扫码加入体验" : "扫码加入桌局"} />}
       <button type="button" className={me.ready ? "secondary-button" : "primary-button"} onClick={() => runCommand(command("player:ready", !me.ready))}>
         {me.ready ? "取消准备" : "确认座位并准备"}
       </button>
@@ -184,7 +225,6 @@ function Lobby({
           <button type="button" className="primary-button" disabled={!everyoneReady} onClick={() => runCommand(command("game:start"))}>
             {isExperience ? "开始完整流程体验" : "开始分配身份"}
           </button>
-          <a className="text-link" href={`/room/${room.code}/board`} target="_blank" rel="noreferrer">打开桌面公共屏</a>
         </>
       )}
       {!exitAction ? (
@@ -192,13 +232,15 @@ function Lobby({
           {me.isHost ? "解散房间并重新创建" : "离开房间"}
         </button>
       ) : (
-        <div className="lobby-exit-confirm" role="alertdialog" aria-label={exitAction === "dissolve" ? "确认解散房间" : "确认离开房间"}>
-          <strong>{exitAction === "dissolve" ? "确定解散这个房间？" : "确定离开这个房间？"}</strong>
-          <p>{exitAction === "dissolve" ? "所有人会回到首页，旧房间号立即失效。" : "你的座位会立即释放，之后需要重新选择座位加入。"}</p>
-          <button type="button" className="danger-button" disabled={exiting} onClick={() => void confirmExit()}>
-            {exiting ? "正在处理…" : exitAction === "dissolve" ? "确认解散并返回首页" : "确认离开并释放座位"}
-          </button>
-          <button type="button" className="text-link" disabled={exiting} onClick={() => setExitAction(null)}>继续等待</button>
+        <div className="lobby-confirm-overlay">
+          <div className="lobby-exit-confirm" role="alertdialog" aria-modal="true" aria-label={exitAction === "dissolve" ? "确认解散房间" : "确认离开房间"}>
+            <strong>{exitAction === "dissolve" ? "确定解散这个房间？" : "确定离开这个房间？"}</strong>
+            <p>{exitAction === "dissolve" ? "所有人会回到首页，旧房间号立即失效。" : "你的座位会立即释放，之后需要重新选择座位加入。"}</p>
+            <button type="button" className="danger-button" disabled={exiting} onClick={() => void confirmExit()}>
+              {exiting ? "正在处理…" : exitAction === "dissolve" ? "确认解散并返回首页" : "确认离开并释放座位"}
+            </button>
+            <button type="button" className="text-link" disabled={exiting} onClick={() => setExitAction(null)}>继续等待</button>
+          </div>
         </div>
       )}
     </main>
@@ -214,20 +256,15 @@ function TeamBuilding({
   privateState: PrivatePlayerState;
   command: <T>(event: any, ...args: unknown[]) => Promise<T>;
 }) {
-  const [selected, setSelected] = useState<string[]>(() => room.settings.mode === "experience"
-    ? room.players.filter((player) => !player.isSimulated).map((player) => player.id)
-    : []);
+  const selected = room.draftTeam;
   const mission = room.missions[room.missionIndex];
   const leader = room.players.find((player) => player.seat === room.leaderSeat);
   const toggle = (playerId: string) => {
-    setSelected((current) =>
-      current.includes(playerId)
-        ? current.filter((id) => id !== playerId)
-        : current.length < mission.teamSize
-          ? [...current, playerId]
-          : current,
-    );
+    if (!selected.includes(playerId) && selected.length >= mission.teamSize) return;
+    void command("team:draft-toggle", playerId).catch(() => undefined);
   };
+  const visibleSelection = room.draftTeam;
+  const selectedPlayers = room.players.filter((player) => visibleSelection.includes(player.id));
   return (
     <main className="phase-screen team-building-screen">
       <PhaseSummary room={room} />
@@ -236,10 +273,14 @@ function TeamBuilding({
         <h1>{privateState.canProposeTeam ? `选择 ${mission.teamSize} 名任务队员` : "队长正在组队"}</h1>
         <span>{mission.requiresTwoFails ? "本轮需要 2 张失败票才会失败" : "1 张失败票将使任务失败"}</span>
       </header>
+      <p className="team-draft-summary" aria-live="polite">
+        已选择 {visibleSelection.length} / {mission.teamSize}
+        {selectedPlayers.length > 0 && ` · ${selectedPlayers.map((player) => `${player.seat}号 ${player.nickname}`).join("、")}`}
+      </p>
       <RoundTable
         players={room.players}
         playerCount={room.settings.playerCount}
-        selectedIds={selected}
+        selectedIds={visibleSelection}
         leaderSeat={room.leaderSeat}
         onToggle={privateState.canProposeTeam ? toggle : undefined}
       />
@@ -264,7 +305,6 @@ function PublicVote({
   command: <T>(event: any, ...args: unknown[]) => Promise<T>;
 }) {
   const [rejectCount, setRejectCount] = useState(0);
-  const remaining = useCountdown(room.voteCountdownEndsAt);
   const team = room.players.filter((player) => room.proposedTeam.includes(player.id));
   return (
     <main className="phase-screen public-vote-screen">
@@ -272,19 +312,9 @@ function PublicVote({
       <header className="phase-heading">
         <p>本轮队伍</p>
         <h1>{team.map((player) => `${player.seat}号 ${player.nickname}`).join(" · ")}</h1>
-        <span>现场讨论结束后，所有人同时亮出赞成或反对。</span>
+        <span>请所有人直接在现场举手表决，手机不参与个人投票。</span>
       </header>
-      {room.voteCountdownEndsAt ? (
-        <div className="countdown-seal" role="timer" aria-live="assertive">
-          <strong>{remaining > 0 ? remaining : "亮票"}</strong>
-          <span>{remaining > 0 ? "准备同时表决" : "请看向桌上的其他人"}</span>
-        </div>
-      ) : (
-        <div className="vote-instruction"><span>3</span><span>2</span><span>1</span></div>
-      )}
-      {privateState.canStartPublicVote && (
-        <button type="button" className="primary-button" onClick={() => runCommand(command("team-vote:start"))}>开始同时亮票</button>
-      )}
+      <div className="show-of-hands-seal" aria-hidden="true"><span>举手</span><small>现场完成</small></div>
       {privateState.canRecordPublicVote && (
         <div className="vote-recorder">
           <p>现场共有多少人反对？</p>
@@ -293,10 +323,56 @@ function PublicVote({
             <strong>{rejectCount}</strong>
             <button type="button" onClick={() => setRejectCount((value) => Math.min(room.settings.playerCount, value + 1))} aria-label="增加反对人数">＋</button>
           </div>
-          <button type="button" className="primary-button" disabled={remaining > 0} onClick={() => runCommand(command("team-vote:record", rejectCount))}>记录表决结果</button>
+          <button type="button" className="primary-button" onClick={() => runCommand(command("team-vote:record", rejectCount))}>确认现场结果</button>
         </div>
       )}
-      {!privateState.canStartPublicVote && !privateState.canRecordPublicVote && <p className="put-phone-down">由房主或当前队长记录结果。</p>}
+      {!privateState.canRecordPublicVote && <p className="put-phone-down">由房主或当前队长记录反对人数。</p>}
+    </main>
+  );
+}
+
+function QuestRevealControl({
+  room,
+  command,
+}: {
+  room: PublicRoomState;
+  command: <T>(event: any, ...args: unknown[]) => Promise<T>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const reveal = async () => {
+    setBusy(true);
+    try {
+      await command("quest:reveal");
+    } catch {
+      setBusy(false);
+    }
+  };
+  return (
+    <main className="phase-screen quest-reveal-control">
+      <PhaseSummary room={room} />
+      <div className="sealed-votes" aria-hidden="true"><i /><i /><i /></div>
+      <header className="phase-heading">
+        <p>第 {room.missionIndex + 1} 轮任务</p>
+        <h1>任务票已全部封存</h1>
+        <span>只有本轮队长可以开启揭晓。</span>
+      </header>
+      <button type="button" className="primary-button" disabled={busy} onClick={() => void reveal()}>
+        {busy ? "正在开启…" : "确认并开始揭晓"}
+      </button>
+    </main>
+  );
+}
+
+function QuestRevealCountdown({ room }: { room: PublicRoomState }) {
+  const remaining = useCountdown(room.questRevealEndsAt, room.serverTime);
+  return (
+    <main className="phase-screen quest-reveal-countdown">
+      <PhaseSummary room={room} />
+      <div className="countdown-seal" role="timer" aria-live="assertive">
+        <strong>{remaining > 0 ? remaining : "揭晓"}</strong>
+        <span>任务结果即将揭晓</span>
+      </div>
+      <p className="put-phone-down">倒数结束后，所有设备会同时看到结果。</p>
     </main>
   );
 }
@@ -395,6 +471,111 @@ function PhaseSummary({ room }: { room: PublicRoomState }) {
   );
 }
 
+function HostControls({
+  room,
+  command,
+  onClose,
+}: {
+  room: PublicRoomState;
+  command: <T>(event: any, ...args: unknown[]) => Promise<T>;
+  onClose: () => void;
+}) {
+  const [qrMode, setQrMode] = useState<"board" | "join">(room.phase === "lobby" ? "join" : "board");
+  const [removeTarget, setRemoveTarget] = useState<string | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const boardUrl = `${window.location.origin}/room/${room.code}/board`;
+  const joinUrl = `${window.location.origin}/?room=${room.code}`;
+  const removablePlayers = room.players.filter((player) => !player.isHost && !player.isSimulated);
+  const targetPlayer = removablePlayers.find((player) => player.id === removeTarget);
+
+  const removePlayer = async () => {
+    if (!removeTarget) return;
+    setBusy(true);
+    try {
+      await command("host:remove-player", removeTarget);
+      setRemoveTarget(null);
+    } catch {
+      // The room-level banner reports the reason and keeps the management sheet open.
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const resetGame = async () => {
+    setBusy(true);
+    try {
+      await command("host:reset-game");
+      onClose();
+    } catch {
+      // The room-level banner reports the reason and keeps the management sheet open.
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="host-controls-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section className="host-controls-sheet" role="dialog" aria-modal="true" aria-label="房主管理">
+        <header>
+          <div><span>房主管理</span><strong>{room.name} · {formatRoomCode(room.code)}</strong></div>
+          <button type="button" aria-label="关闭房主管理" onClick={onClose}>×</button>
+        </header>
+
+        <div className="host-qr-tabs" role="group" aria-label="二维码类型">
+          <button type="button" className={qrMode === "board" ? "is-active" : ""} onClick={() => setQrMode("board")}>公共屏</button>
+          {room.phase === "lobby" && <button type="button" className={qrMode === "join" ? "is-active" : ""} onClick={() => setQrMode("join")}>邀请玩家</button>}
+        </div>
+        {qrMode === "board" || room.phase !== "lobby" ? (
+          <div className="host-qr-panel">
+            <QrCode value={boardUrl} label="用另一台设备扫码进入公共屏" />
+            <a className="secondary-button" href={`/room/${room.code}/board`} target="_blank" rel="noreferrer">在本机预览公共屏</a>
+            <p>公共屏只显示公开信息，不占用玩家座位。</p>
+          </div>
+        ) : (
+          <div className="host-qr-panel">
+            <QrCode value={joinUrl} label={room.settings.mode === "experience" ? "第二台手机扫码加入 2 号位" : "玩家扫码选择空座位"} />
+            <a className="secondary-button" href={`/?room=${room.code}`} target="_blank" rel="noreferrer">在本机打开玩家加入页</a>
+          </div>
+        )}
+
+        <div className="host-player-status">
+          <h2>玩家状态</h2>
+          {room.players.map((player) => (
+            <div key={player.id}>
+              <span>{player.seat}号</span>
+              <strong>{player.nickname}</strong>
+              <small>{player.connected ? "在线" : "离线"}{room.phase === "lobby" ? ` · ${player.ready ? "已准备" : "未准备"}` : ""}</small>
+              {room.phase === "lobby" && !player.isHost && !player.isSimulated && (
+                <button type="button" disabled={busy} onClick={() => setRemoveTarget(player.id)}>移出</button>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {targetPlayer && (
+          <div className="host-danger-confirm" role="alertdialog" aria-label="确认移出玩家">
+            <p>确定将 {targetPlayer.seat}号 {targetPlayer.nickname} 移出桌局？该座位会立即释放。</p>
+            <button type="button" className="danger-button" disabled={busy} onClick={() => void removePlayer()}>确认移出</button>
+            <button type="button" className="text-link" disabled={busy} onClick={() => setRemoveTarget(null)}>取消</button>
+          </div>
+        )}
+
+        {room.phase !== "lobby" && !confirmReset && (
+          <button type="button" className="text-link host-reset-trigger" onClick={() => setConfirmReset(true)}>结束本局并回到候场</button>
+        )}
+        {room.phase !== "lobby" && confirmReset && (
+          <div className="host-danger-confirm" role="alertdialog" aria-label="确认结束本局">
+            <p>所有人会保留座位并回到候场，当前身份和任务进度会清空。</p>
+            <button type="button" className="danger-button" disabled={busy} onClick={() => void resetGame()}>确认结束本局</button>
+            <button type="button" className="text-link" disabled={busy} onClick={() => setConfirmReset(false)}>继续当前游戏</button>
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function WaitingPanel({ title, copy, hint }: { title: string; copy: string; hint: string }) {
   return (
     <main className="waiting-panel">
@@ -427,22 +608,28 @@ function QrCode({ value, label }: { value: string; label: string }) {
     return () => { cancelled = true; };
   }, [value]);
   if (!src) return null;
-  return <div className="qr-code"><img src={src} alt="加入当前房间的二维码" /><span>{label}</span></div>;
+  return <div className="qr-code"><img src={src} alt={label} /><span>{label}</span></div>;
 }
 
-function useCountdown(endsAt: number | null): number {
-  const [remaining, setRemaining] = useState(0);
+function useCountdown(endsAt: number | null, serverTime: number): number {
+  const [localEndsAt] = useState<number | null>(() => (
+    endsAt ? Date.now() + Math.max(0, endsAt - serverTime) : null
+  ));
+  const [remaining, setRemaining] = useState(() => (
+    localEndsAt ? Math.max(0, Math.ceil((localEndsAt - Date.now()) / 1_000)) : 0
+  ));
   useEffect(() => {
-    if (!endsAt) return;
-    const update = () => setRemaining(Math.max(0, Math.ceil((endsAt - Date.now()) / 1_000)));
+    if (!localEndsAt) return;
+    const calculate = () => Math.max(0, Math.ceil((localEndsAt - Date.now()) / 1_000));
+    const update = () => setRemaining(calculate());
     const initialTimer = window.setTimeout(update, 0);
     const timer = window.setInterval(update, 100);
     return () => {
       window.clearTimeout(initialTimer);
       window.clearInterval(timer);
     };
-  }, [endsAt]);
-  return endsAt ? remaining : 0;
+  }, [localEndsAt]);
+  return localEndsAt ? remaining : 0;
 }
 
 function formatRoomCode(code: string): string {

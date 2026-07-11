@@ -3,7 +3,7 @@ import type { MissionOutcome, SessionCredentials } from "@shared/contracts";
 import { GameRoom, RoomError } from "@server/room";
 
 function createReadyRoom(playerCount = 7, rejectionRule: "evil-wins" | "fifth-auto" = "evil-wins") {
-  let now = 1_000;
+  const now = 1_000;
   let randomIndex = 0;
   const randomValues = [0.12, 0.74, 0.31, 0.92, 0.46, 0.68, 0.27, 0.55, 0.83, 0.09];
   const room = new GameRoom(
@@ -21,7 +21,7 @@ function createReadyRoom(playerCount = 7, rejectionRule: "evil-wins" | "fifth-au
   }
   room.startGame(credentials[0].playerId);
   for (const session of credentials) room.confirmIdentity(session.playerId);
-  return { room, credentials, advance: (milliseconds = 4_000) => { now += milliseconds; } };
+  return { room, credentials };
 }
 
 function leaderId(room: GameRoom): string {
@@ -37,10 +37,8 @@ function proposeCurrentTeam(room: GameRoom): string[] {
   return team;
 }
 
-function approveTeam(room: GameRoom, hostId: string, advance: () => void): string[] {
+function approveTeam(room: GameRoom, hostId: string): string[] {
   const team = proposeCurrentTeam(room);
-  room.startPublicVote(hostId);
-  advance();
   expect(room.recordPublicVote(hostId, 0)).toBe(true);
   return team;
 }
@@ -49,7 +47,17 @@ function submitTeamVotes(room: GameRoom, team: string[], voteFor: (playerId: str
   for (const playerId of team) room.submitQuestVote(playerId, voteFor(playerId));
 }
 
-function runMissionWithFailures(room: GameRoom, hostId: string, advance: () => void, failCount: number): void {
+function revealQuest(room: GameRoom): void {
+  let state = room.publicState();
+  if (state.phase === "quest-ready") room.beginQuestReveal(leaderId(room));
+  state = room.publicState();
+  expect(state.phase).toBe("quest-revealing");
+  expect(state.lastQuestResult).toBeNull();
+  expect(room.completeQuestReveal(state.missionIndex)).toBe(true);
+  expect(room.publicState().phase).toBe("quest-result");
+}
+
+function runMissionWithFailures(room: GameRoom, hostId: string, failCount: number): void {
   const state = room.publicState();
   const teamSize = state.missions[state.missionIndex].teamSize;
   const evil = state.players.filter((player) => room.privateState(player.id).faction === "evil");
@@ -58,11 +66,10 @@ function runMissionWithFailures(room: GameRoom, hostId: string, advance: () => v
     ...state.players.filter((player) => !evil.slice(0, failCount).some((chosen) => chosen.id === player.id)),
   ].slice(0, teamSize);
   room.proposeTeam(leaderId(room), selected.map((player) => player.id));
-  room.startPublicVote(hostId);
-  advance();
   room.recordPublicVote(hostId, 0);
   const failureVoters = new Set(evil.slice(0, failCount).map((player) => player.id));
   submitTeamVotes(room, selected.map((player) => player.id), (playerId) => failureVoters.has(playerId) ? "failure" : "success");
+  revealQuest(room);
 }
 
 describe("房间主流程", () => {
@@ -90,10 +97,31 @@ describe("房间主流程", () => {
     expect(() => room.assertCanDissolve(host.playerId)).not.toThrow();
   });
 
+  it("房主可以在候场移出玩家，但普通玩家不能管理座位", () => {
+    const room = new GameRoom("123456", "测试圆桌", { playerCount: 5, rolePreset: "classic", rejectionRule: "evil-wins", mode: "standard" }, "房主");
+    const host = room.initialHostCredentials();
+    const guest = room.addPlayer("阿乔", 2);
+    const other = room.addPlayer("林深", 3);
+    expect(() => room.removePlayer(guest.playerId, other.playerId)).toThrow("只有房主");
+    expect(() => room.removePlayer(host.playerId, host.playerId)).toThrow("房主不能移出自己");
+    room.removePlayer(host.playerId, guest.playerId);
+    expect(room.publicState().players.map((player) => player.seat)).toEqual([1, 3]);
+    expect(() => room.authenticate(guest.token)).toThrow("身份凭证无效");
+  });
+
   it("游戏开始后不能直接离开或解散", () => {
     const { room, credentials } = createReadyRoom();
     expect(() => room.leave(credentials[1].playerId)).toThrow("游戏开始后不能直接离开");
     expect(() => room.assertCanDissolve(credentials[0].playerId)).toThrow("游戏开始后不能直接解散");
+  });
+
+  it("房主可以安全结束本局回到候场并保留座位", () => {
+    const { room, credentials } = createReadyRoom();
+    expect(() => room.resetToLobby(credentials[1].playerId)).toThrow("只有房主");
+    room.resetToLobby(credentials[0].playerId);
+    expect(room.publicState()).toMatchObject({ phase: "lobby", leaderSeat: null, missionIndex: 0, draftTeam: [], proposedTeam: [] });
+    expect(room.publicState().players.every((player) => !player.ready && !player.identityConfirmed)).toBe(true);
+    expect(room.privateState(credentials[0].playerId)).toMatchObject({ role: null, faction: null });
   });
 
   it("开局前不向公共状态泄露身份", () => {
@@ -117,45 +145,78 @@ describe("房间主流程", () => {
     expect(() => room.proposeTeam(leaderId(room), [state.players[0].id])).toThrow("本轮必须选择 2 人");
   });
 
-  it("倒计时结束前不能记录公开表决", () => {
-    const { room, credentials, advance } = createReadyRoom();
+  it("队长选择草稿会实时公开，确认前不切换阶段", () => {
+    const { room, credentials } = createReadyRoom();
+    const state = room.publicState();
+    const leader = leaderId(room);
+    const nonLeader = credentials.find((session) => session.playerId !== leader)!;
+    room.toggleTeamDraft(leader, state.players[0].id);
+    expect(room.publicState()).toMatchObject({ phase: "team-building", draftTeam: [state.players[0].id], proposedTeam: [] });
+    expect(() => room.toggleTeamDraft(nonLeader.playerId, state.players[1].id)).toThrow("只有当前队长");
+    room.toggleTeamDraft(leader, state.players[1].id);
+    expect(room.publicState().draftTeam).toEqual([state.players[0].id, state.players[1].id]);
+    expect(() => room.toggleTeamDraft(leader, state.players[2].id)).toThrow("最多选择 2 人");
+    room.toggleTeamDraft(leader, state.players[1].id);
+    expect(room.publicState().draftTeam).toEqual([state.players[0].id]);
+    expect(() => room.updateTeamDraft(leader, state.players.slice(0, 3).map((player) => player.id))).toThrow("最多选择 2 人");
+    const finalTeam = state.players.slice(0, 2).map((player) => player.id);
+    room.updateTeamDraft(leader, finalTeam);
+    room.proposeTeam(leader, finalTeam);
+    expect(room.publicState()).toMatchObject({ phase: "team-voting", draftTeam: finalTeam, proposedTeam: finalTeam });
+  });
+
+  it("进入现场举手表决后可以立即记录结果", () => {
+    const { room, credentials } = createReadyRoom();
     proposeCurrentTeam(room);
-    room.startPublicVote(credentials[0].playerId);
-    expect(() => room.recordPublicVote(credentials[0].playerId, 0)).toThrow("等待倒计时");
-    advance();
     expect(room.recordPublicVote(credentials[0].playerId, 0)).toBe(true);
   });
 
   it("阻止无权限玩家控制公开流程和非任务队员投票", () => {
-    const { room, credentials, advance } = createReadyRoom();
+    const { room, credentials } = createReadyRoom();
     const controllerIds = new Set([credentials[0].playerId, leaderId(room)]);
     const outsiderController = credentials.find((session) => !controllerIds.has(session.playerId))!;
     const team = proposeCurrentTeam(room);
-    expect(() => room.startPublicVote(outsiderController.playerId)).toThrow("只有房主或当前队长");
-    expect(() => room.recordPublicVote(credentials[0].playerId, 0)).toThrow("请先进行同时亮票倒计时");
-    room.startPublicVote(credentials[0].playerId);
-    advance();
+    expect(() => room.recordPublicVote(outsiderController.playerId, 0)).toThrow("只有房主或当前队长");
+    expect(() => room.recordPublicVote(credentials[0].playerId, 8)).toThrow("反对人数无效");
     room.recordPublicVote(credentials[0].playerId, 0);
     const nonMember = credentials.find((session) => !team.includes(session.playerId))!;
     expect(() => room.submitQuestVote(nonMember.playerId, "success")).toThrow("你不在本轮任务队伍中");
   });
 
   it("正义方不能提交失败票，也不能重复提交", () => {
-    const { room, credentials, advance } = createReadyRoom();
-    const team = approveTeam(room, credentials[0].playerId, advance);
+    const { room, credentials } = createReadyRoom();
+    const team = approveTeam(room, credentials[0].playerId);
     const goodPlayer = team.find((id) => room.privateState(id).faction === "good")!;
     expect(() => room.submitQuestVote(goodPlayer, "failure")).toThrow("正义方只能提交任务成功");
     room.submitQuestVote(goodPlayer, "success");
     expect(() => room.submitQuestVote(goodPlayer, "success")).toThrow("已经提交");
   });
 
+  it("最后一票后仍隐藏结果，只有本轮队长能开始三秒揭晓", () => {
+    const { room, credentials } = createReadyRoom();
+    const team = approveTeam(room, credentials[0].playerId);
+    submitTeamVotes(room, team);
+    expect(room.publicState()).toMatchObject({ phase: "quest-ready", lastQuestResult: null, questRevealEndsAt: null });
+    const leader = leaderId(room);
+    const nonLeader = credentials.find((session) => session.playerId !== leader)!;
+    expect(() => room.beginQuestReveal(nonLeader.playerId)).toThrow("只有本轮队长");
+    const schedule = room.beginQuestReveal(leader);
+    expect(schedule.durationMs).toBe(3_000);
+    expect(room.publicState()).toMatchObject({ phase: "quest-revealing", lastQuestResult: null, questRevealEndsAt: schedule.endsAt });
+    expect(() => room.beginQuestReveal(leader)).toThrow("已经开始揭晓");
+    expect(room.completeQuestReveal(schedule.missionIndex + 1)).toBe(false);
+    expect(room.completeQuestReveal(schedule.missionIndex)).toBe(true);
+    expect(room.publicState()).toMatchObject({ phase: "quest-result", questRevealEndsAt: null });
+  });
+
   it("完成三次成功任务后进入刺杀，刺中梅林则邪恶获胜", () => {
-    const { room, credentials, advance } = createReadyRoom();
+    const { room, credentials } = createReadyRoom();
     const hostId = credentials[0].playerId;
     for (let mission = 0; mission < 3; mission += 1) {
-      const team = approveTeam(room, hostId, advance);
+      const team = approveTeam(room, hostId);
       submitTeamVotes(room, team);
-      expect(room.publicState().phase).toBe("quest-result");
+      expect(room.publicState()).toMatchObject({ phase: "quest-ready", lastQuestResult: null });
+      revealQuest(room);
       room.continueAfterQuest(hostId);
     }
     expect(room.publicState().phase).toBe("assassination");
@@ -167,11 +228,12 @@ describe("房间主流程", () => {
   });
 
   it("刺错目标时正义获胜", () => {
-    const { room, credentials, advance } = createReadyRoom();
+    const { room, credentials } = createReadyRoom();
     const hostId = credentials[0].playerId;
     for (let mission = 0; mission < 3; mission += 1) {
-      const team = approveTeam(room, hostId, advance);
+      const team = approveTeam(room, hostId);
       submitTeamVotes(room, team);
+      revealQuest(room);
       room.continueAfterQuest(hostId);
     }
     const assassin = credentials.find((session) => room.privateState(session.playerId).role === "assassin")!;
@@ -181,22 +243,18 @@ describe("房间主流程", () => {
   });
 
   it("连续五次否决后邪恶方获胜", () => {
-    const { room, credentials, advance } = createReadyRoom(7, "evil-wins");
+    const { room, credentials } = createReadyRoom(7, "evil-wins");
     for (let attempt = 0; attempt < 5; attempt += 1) {
       proposeCurrentTeam(room);
-      room.startPublicVote(credentials[0].playerId);
-      advance();
       room.recordPublicVote(credentials[0].playerId, 4);
     }
     expect(room.publicState()).toMatchObject({ phase: "complete", winner: "evil", rejectionCount: 5 });
   });
 
   it("第五队强制出发模式跳过第五次公开表决", () => {
-    const { room, credentials, advance } = createReadyRoom(7, "fifth-auto");
+    const { room, credentials } = createReadyRoom(7, "fifth-auto");
     for (let attempt = 0; attempt < 4; attempt += 1) {
       proposeCurrentTeam(room);
-      room.startPublicVote(credentials[0].playerId);
-      advance();
       room.recordPublicVote(credentials[0].playerId, 4);
     }
     proposeCurrentTeam(room);
@@ -208,19 +266,19 @@ describe("房间主流程", () => {
     const first = createReadyRoom(7);
     const firstHost = first.credentials[0].playerId;
     for (const fails of [0, 1, 1]) {
-      runMissionWithFailures(first.room, firstHost, first.advance, fails);
+      runMissionWithFailures(first.room, firstHost, fails);
       first.room.continueAfterQuest(firstHost);
     }
-    runMissionWithFailures(first.room, firstHost, first.advance, 1);
+    runMissionWithFailures(first.room, firstHost, 1);
     expect(first.room.publicState().missions[3]).toMatchObject({ requiresTwoFails: true, outcome: "success", failCount: 1 });
 
     const second = createReadyRoom(7);
     const secondHost = second.credentials[0].playerId;
     for (const fails of [0, 0, 1]) {
-      runMissionWithFailures(second.room, secondHost, second.advance, fails);
+      runMissionWithFailures(second.room, secondHost, fails);
       second.room.continueAfterQuest(secondHost);
     }
-    runMissionWithFailures(second.room, secondHost, second.advance, 2);
+    runMissionWithFailures(second.room, secondHost, 2);
     expect(second.room.publicState().missions[3]).toMatchObject({ requiresTwoFails: true, outcome: "failure", failCount: 2 });
   });
 
@@ -236,12 +294,13 @@ describe("房间主流程", () => {
   });
 
   it("游戏结束后可以保留座位并重新分配身份", () => {
-    const { room, credentials, advance } = createReadyRoom();
+    const { room, credentials } = createReadyRoom();
     const hostId = credentials[0].playerId;
     for (let mission = 0; mission < 3; mission += 1) {
-      const team = approveTeam(room, hostId, advance);
+      const team = approveTeam(room, hostId);
       const evilOnTeam = team.find((id) => room.privateState(id).faction === "evil");
       submitTeamVotes(room, team, (id) => id === evilOnTeam ? "failure" : "success");
+      revealQuest(room);
       room.continueAfterQuest(hostId);
     }
     expect(room.publicState().winner).toBe("evil");
@@ -252,10 +311,10 @@ describe("房间主流程", () => {
   });
 
   it("有人离线时不会误触重开", () => {
-    const { room, credentials, advance } = createReadyRoom();
+    const { room, credentials } = createReadyRoom();
     const hostId = credentials[0].playerId;
     for (let mission = 0; mission < 3; mission += 1) {
-      runMissionWithFailures(room, hostId, advance, 1);
+      runMissionWithFailures(room, hostId, 1);
       room.continueAfterQuest(hostId);
     }
     expect(room.publicState().phase).toBe("complete");
@@ -297,6 +356,7 @@ describe("房间主流程", () => {
     for (let mission = 0; mission < 3; mission += 1) {
       const state = room.publicState();
       if (state.phase === "team-building") {
+        expect(state.draftTeam).toEqual(expect.arrayContaining(humanIds));
         const requiredSize = state.missions[state.missionIndex].teamSize;
         const simulatedIds = state.players.filter((player) => player.isSimulated).map((player) => player.id);
         const team = [...humanIds, ...simulatedIds].slice(0, requiredSize);
@@ -307,13 +367,14 @@ describe("房间主流程", () => {
       const voting = room.publicState();
       expect(voting.phase).toBe("team-voting");
       expect(voting.proposedTeam).toEqual(expect.arrayContaining(humanIds));
-      room.startPublicVote(host.playerId);
-      now += 4_000;
       room.recordPublicVote(host.playerId, 0);
       room.submitQuestVote(host.playerId, "success");
       expect(room.publicState().phase).toBe("quest-voting");
       room.submitQuestVote(second.playerId, "success");
-      expect(room.publicState().phase).toBe("quest-result");
+      if (mission === 2) expect(room.publicState().phase).toBe("quest-revealing");
+      else expect(room.publicState().phase).toBe("quest-ready");
+      now += 3_000;
+      revealQuest(room);
       room.continueAfterQuest(host.playerId);
     }
 

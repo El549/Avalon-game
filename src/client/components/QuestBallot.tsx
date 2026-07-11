@@ -5,10 +5,12 @@ import { BrokenCrownIcon, SwordIcon } from "../icons";
 export function QuestBallot({
   missionNumber,
   faction,
+  orderKey,
   onSubmit,
 }: {
   missionNumber: number;
   faction: Faction;
+  orderKey: string;
   onSubmit: (vote: MissionOutcome) => Promise<void>;
 }) {
   const [selected, setSelected] = useState<MissionOutcome | null>(null);
@@ -24,6 +26,9 @@ export function QuestBallot({
       setBusy(false);
     }
   };
+  const options: MissionOutcome[] = failureComesFirst(orderKey)
+    ? ["failure", "success"]
+    : ["success", "failure"];
   return (
     <main className="ballot-screen">
       <header>
@@ -32,22 +37,17 @@ export function QuestBallot({
         <h1>秘密选择一张任务票</h1>
       </header>
       <div className="ballot-options" role="radiogroup" aria-label="任务票">
-        <BallotOption
-          value="success"
-          selected={selected === "success"}
-          title="任务成功"
-          copy="让任务顺利完成"
-          onSelect={setSelected}
-        />
-        {faction === "evil" && (
+        {options.map((value) => (
           <BallotOption
-            value="failure"
-            selected={selected === "failure"}
-            title="任务失败"
-            copy="破坏本次任务"
+            key={value}
+            value={value}
+            selected={selected === value}
+            title={value === "success" ? "任务成功" : "任务失败"}
+            copy={value === "success" ? "让任务顺利完成" : faction === "good" ? "你的身份不能选择此票" : "破坏本次任务"}
+            disabled={value === "failure" && faction === "good"}
             onSelect={setSelected}
           />
-        )}
+        ))}
       </div>
       <p className="ballot-warning">选择确认后不能更改</p>
       <button type="button" className="primary-button" disabled={!selected || busy} onClick={submit}>
@@ -62,12 +62,14 @@ function BallotOption({
   selected,
   title,
   copy,
+  disabled,
   onSelect,
 }: {
   value: MissionOutcome;
   selected: boolean;
   title: string;
   copy: string;
+  disabled: boolean;
   onSelect: (value: MissionOutcome) => void;
 }) {
   return (
@@ -76,6 +78,7 @@ function BallotOption({
       className={`ballot-option ballot-option--${value} ${selected ? "ballot-option--selected" : ""}`}
       role="radio"
       aria-checked={selected}
+      disabled={disabled}
       onClick={() => onSelect(value)}
     >
       <span className="ballot-option__icon">{value === "success" ? <SwordIcon /> : <BrokenCrownIcon />}</span>
@@ -86,4 +89,10 @@ function BallotOption({
       <i aria-hidden="true" />
     </button>
   );
+}
+
+function failureComesFirst(orderKey: string): boolean {
+  let hash = 0;
+  for (const character of orderKey) hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
+  return (hash & 1) === 1;
 }

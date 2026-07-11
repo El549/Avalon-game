@@ -1,4 +1,4 @@
-import { expect, test, type BrowserContext, type Page } from "@playwright/test";
+import { expect, test, type BrowserContext, type Locator, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
 interface Credentials {
@@ -76,9 +76,12 @@ test("七人桌局从创建、认身份到刺杀和重开完整可用", async ({
     for (const player of players) {
       const hold = player.page.getByRole("button", { name: "按住查看身份，松手隐藏" });
       await expect(hold).toBeVisible();
-      await hold.dispatchEvent("pointerdown", { pointerId: 1, pointerType: "touch", isPrimary: true });
+      const holdBox = await hold.boundingBox();
+      if (!holdBox) throw new Error(`${player.seat} 号玩家的身份封印不在可视区域`);
+      await player.page.mouse.move(holdBox.x + holdBox.width / 2, holdBox.y + holdBox.height / 2);
+      await player.page.mouse.down();
       const roleHeading = player.page.locator(".identity-details h2");
-      await expect(roleHeading).toBeVisible();
+      await expect(roleHeading, `${player.seat} 号玩家按住身份后应看到角色`).toBeVisible();
       const role = (await roleHeading.textContent())?.trim();
       if (!role) throw new Error(`${player.seat} 号玩家未看到身份`);
       roleBySeat.set(player.seat, role);
@@ -89,7 +92,7 @@ test("七人桌局从创建、认身份到刺杀和重开完整可用", async ({
         await player.page.waitForTimeout(300);
         await player.page.screenshot({ path: "/tmp/avalon-identity-final.png", fullPage: true });
       }
-      await hold.dispatchEvent("pointerup", { pointerId: 1, pointerType: "touch", isPrimary: true });
+      await player.page.mouse.up();
       await expect(roleHeading).toBeHidden();
       await player.page.getByRole("button", { name: "我已记住" }).click();
     }
@@ -118,15 +121,32 @@ test("七人桌局从创建、认身份到刺杀和重开完整可用", async ({
       await expect(leaderPage.getByRole("heading", { name: `选择 ${teamSize} 名任务队员` })).toBeVisible();
       const seatButtons = leaderPage.locator(".round-table button.seat");
       await expect(seatButtons).toHaveCount(7);
-      for (let index = 0; index < teamSize; index += 1) await seatButtons.nth(index).click();
+      if (missionIndex === 0) {
+        const observerPage = players.find((player) => player.page !== leaderPage)!.page;
+        await seatButtons.nth(0).click();
+        await expect(observerPage.locator(".round-table .seat--selected")).toHaveCount(1);
+        await expect(board.locator(".round-table .seat--selected")).toHaveCount(1);
+        await seatButtons.nth(0).click();
+        await expect(observerPage.locator(".round-table .seat--selected")).toHaveCount(0);
+        await seatButtons.evaluateAll((buttons, count) => {
+          buttons.slice(0, count).forEach((button) => (button as HTMLButtonElement).click());
+        }, teamSize);
+        await expect(observerPage.locator(".round-table .seat--selected")).toHaveCount(teamSize);
+        await expect(board.locator(".round-table .seat--selected")).toHaveCount(teamSize);
+      } else {
+        for (let index = 0; index < teamSize; index += 1) await seatButtons.nth(index).click();
+      }
+      await expect(leaderPage.getByRole("button", { name: "确认本轮队伍" })).toBeEnabled();
       await leaderPage.getByRole("button", { name: "确认本轮队伍" }).click();
 
-      await expect(board.getByRole("heading", { name: "讨论本轮任务队伍" })).toBeVisible();
-      await page.getByRole("button", { name: "开始同时亮票" }).click();
-      await expect(board.getByRole("heading", { name: "请所有人同时亮出赞成或反对" })).toBeVisible();
+      await expect(board.getByRole("heading", { name: "请在现场表决这支队伍" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "开始同时亮票" })).toHaveCount(0);
+      await expect(page.getByRole("timer")).toHaveCount(0);
       const recordVote = page.getByRole("button", { name: "记录表决结果" });
-      await expect(recordVote).toBeEnabled({ timeout: 6_000 });
-      await recordVote.click();
+      const newRecordVote = page.getByRole("button", { name: "确认现场结果" });
+      await expect(recordVote).toHaveCount(0);
+      await expect(newRecordVote).toBeEnabled();
+      await newRecordVote.click();
 
       for (let index = 0; index < teamSize; index += 1) {
         const questPage = players[index].page;
@@ -138,6 +158,12 @@ test("七人桌局从创建、认身份到刺杀和重开完整可用", async ({
         await questPage.getByRole("button", { name: "确认任务票" }).click();
       }
 
+      await expect(board.getByRole("heading", { name: "任务票已全部封存" })).toBeVisible();
+      const reveal = leaderPage.getByRole("button", { name: "确认并开始揭晓" });
+      await expect(reveal).toBeVisible();
+      await reveal.click();
+      await expect(leaderPage.getByRole("timer")).toBeVisible();
+      await expect(board.getByRole("heading", { name: "任务结果即将揭晓" })).toBeVisible();
       await expect(board.getByRole("heading", { name: "任务成功" })).toBeVisible();
       await expect(board.getByText("共出现 0 张失败票")).toBeVisible();
       const continueLabel = missionIndex === 2 ? "进入刺杀阶段" : "进入下一轮";
@@ -174,7 +200,7 @@ test("七人桌局从创建、认身份到刺杀和重开完整可用", async ({
   }
 });
 
-test("手机首页能清楚报错、换座，并通过无障碍检查", async ({ page, request }) => {
+test("手机首页能清楚报错、换座，并在误关后恢复上次桌局", async ({ page, request, context }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /让秘密留在手机里/ })).toBeVisible();
@@ -205,11 +231,24 @@ test("手机首页能清楚报错、换座，并通过无障碍检查", async ({
   const publicResponse = await request.get(`/api/rooms/${roomCode}/public`);
   const publicBody = await publicResponse.json() as { data: { players: { nickname: string; seat: number }[] } };
   expect(publicBody.data.players.find((player) => player.nickname === "换座玩家")?.seat).toBe(4);
+
+  await page.close();
+  const reopened = await context.newPage();
+  await reopened.route(`**/api/rooms/${roomCode}/session`, (route) => route.abort("failed"));
+  await reopened.goto("/");
+  const resume = reopened.getByRole("button", { name: /继续上次桌局/ });
+  await expect(resume).toContainText(`房间号 ${roomCode.slice(0, 3)} ${roomCode.slice(3)}`);
+  await expect(resume).toContainText("暂时无法确认房间状态");
+  expect(await reopened.evaluate((code) => Boolean(localStorage.getItem(`round-table-session:${code}`)), roomCode)).toBe(true);
+  await reopened.unroute(`**/api/rooms/${roomCode}/session`);
+  await resume.click();
+  await expect(reopened).toHaveURL(new RegExp(`/room/${roomCode}$`));
+  await expect(reopened.locator(".round-table .seat--current").getByText("4")).toBeVisible();
 });
 
 test("两台手机可以通过流程体验走到刺杀与结局", async ({ page, browser }) => {
   test.setTimeout(90_000);
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 360, height: 640 });
   await page.goto("/");
   await page.getByRole("button", { name: "流程体验" }).click();
   await page.getByRole("textbox", { name: "第一位体验者昵称" }).fill("第一台手机");
@@ -218,12 +257,15 @@ test("两台手机可以通过流程体验走到刺杀与结局", async ({ page,
   const roomCode = page.url().match(/(\d{6})$/)?.[1];
   if (!roomCode) throw new Error("体验房间没有房间号");
   await expect(page.getByText("4 / 5 已就座")).toBeVisible();
-  await expect(page.getByText("第二台手机请扫码加入 2 号位")).toBeVisible();
+  await expect(page.getByText("第二台手机加入 2 号位")).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expectGameScreenFits(page, page.getByRole("button", { name: "确认座位并准备" }));
+  await page.setViewportSize({ width: 360, height: 640 });
 
   const secondContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
   const boardContext = await browser.newContext({ viewport: { width: 1451, height: 862 } });
   try {
-    const second = await secondContext.newPage();
+    let second = await secondContext.newPage();
     await second.goto(`/?room=${roomCode}`);
     await expect(second.getByText("4 / 5 已就座")).toBeVisible();
     await second.getByRole("textbox", { name: "你的昵称" }).fill("第二台手机");
@@ -234,6 +276,18 @@ test("两台手机可以通过流程体验走到刺杀与结局", async ({ page,
     await board.goto(`/room/${roomCode}/board`);
     await expect(board.getByText("5 / 5 已就座")).toBeVisible();
     await expect(board.getByText("完整流程体验")).toBeVisible();
+    await expectGameScreenFits(page, page.getByRole("button", { name: "确认座位并准备" }));
+    await expectGameScreenFits(second, second.getByRole("button", { name: "确认座位并准备" }));
+
+    await expect(second.getByRole("button", { name: "房主管理" })).toHaveCount(0);
+    await page.getByRole("button", { name: "房主管理" }).click();
+    await expect(page.getByRole("dialog", { name: "房主管理" })).toBeVisible();
+    await expect(page.getByRole("img", { name: "第二台手机扫码加入 2 号位" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "在本机打开玩家加入页" })).toHaveAttribute("href", `/?room=${roomCode}`);
+    await page.getByRole("button", { name: "公共屏" }).click();
+    await expect(page.getByRole("img", { name: "用另一台设备扫码进入公共屏" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "在本机预览公共屏" })).toHaveAttribute("href", `/room/${roomCode}/board`);
+    await page.getByRole("button", { name: "关闭房主管理" }).click();
 
     await page.getByRole("button", { name: "确认座位并准备" }).click();
     await second.getByRole("button", { name: "确认座位并准备" }).click();
@@ -241,42 +295,102 @@ test("两台手机可以通过流程体验走到刺杀与结局", async ({ page,
     await expect(start).toBeEnabled();
     await start.click();
 
+    await expectGameScreenFits(page, page.getByRole("button", { name: "按住查看身份，松手隐藏" }));
     await revealAndConfirmRole(page, "梅林");
     await expect(board.getByRole("heading", { name: "等待所有人记住身份" })).toBeVisible();
+    await expectGameScreenFits(second, second.getByRole("button", { name: "按住查看身份，松手隐藏" }));
     await revealAndConfirmRole(second, "刺客");
     await expect(board.getByText(/正在组队/)).toBeVisible();
 
     for (let mission = 0; mission < 3; mission += 1) {
       if (mission === 0) {
         const confirmTeam = page.getByRole("button", { name: "确认本轮队伍" });
+        await expectGameScreenFits(page, confirmTeam);
         await expect(confirmTeam).toBeEnabled();
         await confirmTeam.click();
       } else if (mission === 1) {
         await expect(second.getByRole("heading", { name: "选择 3 名任务队员" })).toBeVisible();
+        await expectGameScreenFits(second, second.getByRole("button", { name: "确认本轮队伍" }));
         await second.getByRole("button", { name: /3号 模拟骑士A/ }).click();
+        await expect(page.locator(".round-table .seat--selected")).toHaveCount(3);
         await second.getByRole("button", { name: "确认本轮队伍" }).click();
       }
 
-      await expect(board.getByRole("heading", { name: "讨论本轮任务队伍" })).toBeVisible();
-      await page.getByRole("button", { name: "开始同时亮票" }).click();
-      const recordVote = page.getByRole("button", { name: "记录表决结果" });
-      await expect(recordVote).toBeEnabled({ timeout: 6_000 });
+      await expect(board.getByRole("heading", { name: "请在现场表决这支队伍" })).toBeVisible();
+      const recordVote = page.getByRole("button", { name: "确认现场结果" });
+      await expect(recordVote).toBeEnabled();
+      await expectGameScreenFits(page, recordVote);
       await recordVote.click();
 
+      await expectGameScreenFits(page, page.getByRole("button", { name: "确认任务票" }));
+      await expectGameScreenFits(second, second.getByRole("button", { name: "确认任务票" }));
+      if (mission === 0) {
+        await expect(page.getByRole("radio", { name: /任务失败/ })).toBeDisabled();
+        const evilBallots = second.locator(".ballot-option");
+        await expect(evilBallots).toHaveCount(2);
+        const visualStyles = await evilBallots.evaluateAll((options) => options.map((option) => {
+          const style = getComputedStyle(option);
+          return { backgroundColor: style.backgroundColor, borderColor: style.borderColor };
+        }));
+        expect(new Set(visualStyles.map((style) => style.backgroundColor)).size).toBe(1);
+        expect(new Set(visualStyles.map((style) => style.borderColor)).size).toBe(1);
+        const orderBeforeReload = await evilBallots.allTextContents();
+        await second.close();
+        second = await secondContext.newPage();
+        await second.goto("/");
+        const resume = second.getByRole("button", { name: /继续上次桌局/ });
+        await expect(resume).toContainText(`房间号 ${roomCode.slice(0, 3)} ${roomCode.slice(3)}`);
+        await resume.click();
+        await expect(second).toHaveURL(new RegExp(`/room/${roomCode}$`));
+        await expect(second.getByRole("button", { name: "确认任务票" })).toBeVisible();
+        expect(await second.locator(".ballot-option").allTextContents()).toEqual(orderBeforeReload);
+      }
       await submitSuccessfulQuest(page);
+      await expectGameScreenFits(page, page.getByRole("heading", { name: "任务票已封存" }));
       await submitSuccessfulQuest(second);
+      if (mission < 2) {
+        const leaderPage = mission === 0 ? page : second;
+        await expect(board.getByRole("heading", { name: "任务票已全部封存" })).toBeVisible();
+        const reveal = leaderPage.getByRole("button", { name: "确认并开始揭晓" });
+        await expectGameScreenFits(leaderPage, reveal);
+        await expect(reveal).toBeVisible();
+        if (mission === 0) {
+          await leaderPage.evaluate(() => {
+            const actualNow = Date.now.bind(Date);
+            Date.now = () => actualNow() + 3_600_000;
+          });
+        }
+        await reveal.click();
+        const timer = leaderPage.getByRole("timer");
+        await expectGameScreenFits(leaderPage, timer);
+        await expect(timer).toContainText(/3|2|1/);
+      }
+      await expect(board.getByRole("heading", { name: "任务结果即将揭晓" })).toBeVisible();
+      if (mission === 2) await expectGameScreenFits(page, page.getByRole("heading", { name: "任务结果即将揭晓" }));
       await expect(board.getByRole("heading", { name: "任务成功" })).toBeVisible();
       const continueLabel = mission === 2 ? "进入刺杀阶段" : "进入下一轮";
+      await expectGameScreenFits(page, page.getByRole("button", { name: continueLabel }));
       await page.getByRole("button", { name: continueLabel }).click();
     }
 
     await expect(second.getByRole("heading", { name: "指出你认为的梅林" })).toBeVisible();
+    await expectGameScreenFits(second, second.getByRole("button", { name: /第一台手机/ }));
     await second.locator(".target-list button").filter({ hasText: "第一台手机" }).click();
     await second.getByRole("button", { name: "选择这名玩家" }).click();
+    await expectGameScreenFits(second, second.getByRole("button", { name: "确认刺杀" }));
     await second.getByRole("button", { name: "确认刺杀" }).click();
     await expect(board.getByRole("heading", { name: "邪恶方获胜" })).toBeVisible();
     await expect(board.locator(".board-role-reveal b")).toHaveCount(5);
     await expect(page.getByRole("heading", { name: "邪恶方获胜" })).toBeVisible();
+    await expectGameScreenFits(page, page.getByRole("button", { name: "原座位再来一局" }));
+
+    await page.getByRole("button", { name: "房主管理" }).click();
+    await page.getByRole("button", { name: "结束本局并回到候场" }).click();
+    await expect(page.getByRole("alertdialog", { name: "确认结束本局" })).toBeVisible();
+    await page.getByRole("button", { name: "确认结束本局" }).click();
+    await expect(page.getByText("5 / 5 已就座")).toBeVisible();
+    await expect(board.getByText("完整流程体验")).toBeVisible();
+    await expect(board.locator(".board-role-reveal")).toHaveCount(0);
   } finally {
     await secondContext.close();
     await boardContext.close();
@@ -314,6 +428,39 @@ test("等候阶段可以离开、释放座位并由房主解散房间", async ({
 
     await guest.goto(`/?room=${roomCode}`);
     await guest.getByRole("textbox", { name: "你的昵称" }).fill("重新加入");
+    await guest.getByRole("button", { name: "确认座位并加入" }).click();
+    await expect(board.getByText("2 / 7 已就座")).toBeVisible();
+
+    await page.getByRole("button", { name: "房主管理" }).click();
+    await expect(page.getByRole("img", { name: "玩家扫码选择空座位" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "在本机打开玩家加入页" })).toHaveAttribute("href", `/?room=${roomCode}`);
+    await page.getByRole("button", { name: "公共屏" }).click();
+    await expect(page.getByRole("img", { name: "用另一台设备扫码进入公共屏" })).toBeVisible();
+    await page.locator(".host-player-status").getByRole("button", { name: "移出" }).click();
+    await page.getByRole("button", { name: "确认移出" }).click();
+    await expect(guest).toHaveURL(/\?notice=removed$/);
+    await expect(guest.getByRole("status")).toHaveText("你已被房主移出原桌局，可以加入其他房间。");
+    await expect(board.getByText("1 / 7 已就座")).toBeVisible();
+    await page.getByRole("button", { name: "关闭房主管理" }).click();
+
+    await guest.goto(`/?room=${roomCode}`);
+    await guest.getByRole("textbox", { name: "你的昵称" }).fill("再次加入");
+    await guest.getByRole("button", { name: "确认座位并加入" }).click();
+    await expect(board.getByText("2 / 7 已就座")).toBeVisible();
+
+    // 离线时被房主移出会错过实时通知；恢复网络后仍应清理旧身份并回到加入页。
+    await guestContext.setOffline(true);
+    await expect(board.getByText("2 / 7 已就座")).toBeVisible();
+    await page.getByRole("button", { name: "房主管理" }).click();
+    await page.locator(".host-player-status").getByRole("button", { name: "移出" }).click();
+    await page.getByRole("button", { name: "确认移出" }).click();
+    await expect(board.getByText("1 / 7 已就座")).toBeVisible();
+    await guestContext.setOffline(false);
+    await expect(guest).toHaveURL(new RegExp(`\\?room=${roomCode}&notice=session-invalid$`));
+    await expect(guest.getByRole("status")).toHaveText("原座位已被释放或身份已经失效，请重新选择空座位加入。");
+    await page.getByRole("button", { name: "关闭房主管理" }).click();
+
+    await guest.getByRole("textbox", { name: "你的昵称" }).fill("解散前加入");
     await guest.getByRole("button", { name: "确认座位并加入" }).click();
     await expect(board.getByText("2 / 7 已就座")).toBeVisible();
 
@@ -385,11 +532,56 @@ async function expectBoardHasNoRoles(board: Page): Promise<void> {
   await expect(board.locator(".board-role-reveal")).toHaveCount(0);
 }
 
+async function expectGameScreenFits(page: Page, primaryAction: Locator): Promise<void> {
+  await expect(primaryAction).toBeVisible();
+  await expect(primaryAction).toBeInViewport();
+  const primaryBox = await primaryAction.boundingBox();
+  expect(primaryBox).not.toBeNull();
+  const metrics = await page.evaluate(() => {
+    const main = document.querySelector<HTMLElement>(".player-shell > main");
+    if (!main) return null;
+    const actionElements = [...main.querySelectorAll<HTMLElement>("button, a, input, [role='radio']")]
+      .filter((element) => {
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
+      });
+    const lowestAction = actionElements.reduce((bottom, element) => Math.max(bottom, element.getBoundingClientRect().bottom), 0);
+    const overflowY = getComputedStyle(main).overflowY;
+    const canScroll = overflowY === "auto" || overflowY === "scroll";
+    const clippedControls = actionElements.flatMap((element) => {
+      const rect = element.getBoundingClientRect();
+      const clipped = rect.top < -1 || rect.left < -1 || rect.bottom > window.innerHeight + 1 || rect.right > window.innerWidth + 1;
+      return clipped ? [element.getAttribute("aria-label") ?? element.textContent?.trim().slice(0, 30) ?? element.tagName] : [];
+    });
+    return {
+      innerHeight: window.innerHeight,
+      innerWidth: window.innerWidth,
+      documentOverflow: Math.max(document.documentElement.scrollHeight, document.body.scrollHeight) - window.innerHeight,
+      documentWidthOverflow: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - window.innerWidth,
+      scrollableMainOverflow: canScroll ? main.scrollHeight - main.clientHeight : 0,
+      lowestAction,
+      clippedControls,
+    };
+  });
+  expect(metrics).not.toBeNull();
+  expect(primaryBox!.x).toBeGreaterThanOrEqual(-1);
+  expect(primaryBox!.y).toBeGreaterThanOrEqual(-1);
+  expect(primaryBox!.x + primaryBox!.width).toBeLessThanOrEqual(metrics!.innerWidth + 1);
+  expect(primaryBox!.y + primaryBox!.height).toBeLessThanOrEqual(metrics!.innerHeight + 1);
+  expect(metrics!.documentOverflow).toBeLessThanOrEqual(1);
+  expect(metrics!.documentWidthOverflow).toBeLessThanOrEqual(1);
+  expect(metrics!.scrollableMainOverflow).toBeLessThanOrEqual(1);
+  expect(metrics!.lowestAction).toBeLessThanOrEqual(metrics!.innerHeight + 1);
+  expect(metrics!.clippedControls).toEqual([]);
+}
+
 async function revealAndConfirmRole(page: Page, expectedRole: string): Promise<void> {
   const hold = page.getByRole("button", { name: "按住查看身份，松手隐藏" });
   await expect(hold).toBeVisible();
   await hold.dispatchEvent("pointerdown", { pointerId: 1, pointerType: "touch", isPrimary: true });
   await expect(page.locator(".identity-details h2")).toHaveText(expectedRole);
+  await expectGameScreenFits(page, page.getByRole("button", { name: "我已记住" }));
   await hold.dispatchEvent("pointerup", { pointerId: 1, pointerType: "touch", isPrimary: true });
   await page.getByRole("button", { name: "我已记住" }).click();
 }

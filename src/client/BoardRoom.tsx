@@ -26,7 +26,7 @@ export function BoardRoom({ roomCode }: { roomCode: string }) {
         <RoundTable
           players={publicState.players}
           playerCount={publicState.settings.playerCount}
-          selectedIds={publicState.proposedTeam}
+          selectedIds={publicState.phase === "team-building" ? publicState.draftTeam : publicState.proposedTeam}
           leaderSeat={publicState.leaderSeat}
           label="当前圆桌座位与任务队伍"
         />
@@ -42,7 +42,6 @@ export function BoardRoom({ roomCode }: { roomCode: string }) {
 }
 
 function BoardCenter({ room }: { room: PublicRoomState }) {
-  const remaining = useBoardCountdown(room.voteCountdownEndsAt);
   const leader = room.players.find((player) => player.seat === room.leaderSeat);
   const mission = room.missions[Math.min(room.missionIndex, 4)];
   if (room.phase === "lobby") {
@@ -78,16 +77,21 @@ function BoardCenter({ room }: { room: PublicRoomState }) {
         <p>第 {room.missionIndex + 1} 轮任务</p>
         <strong>{mission.teamSize}</strong>
         <h1>{leader?.seat}号 {leader?.nickname} 正在组队</h1>
-        <span>本轮需要 {mission.teamSize} 人 · {mission.requiresTwoFails ? "需要 2 张失败票" : "1 张失败票即失败"}</span>
+        <span>
+          {room.draftTeam.length > 0
+            ? `已选择 ${room.draftTeam.map((id) => room.players.find((player) => player.id === id)?.seat).join("、")} 号`
+            : "等待队长点选任务队员"}
+          {` · 本轮需要 ${mission.teamSize} 人`}
+        </span>
       </div>
     );
   }
   if (room.phase === "team-voting") {
     return (
-      <div className="board-message board-message--countdown">
+      <div className="board-message">
         <p>第 {room.missionIndex + 1} 轮任务</p>
-        <strong>{room.voteCountdownEndsAt ? (remaining > 0 ? remaining : "亮票") : "—"}</strong>
-        <h1>{room.voteCountdownEndsAt ? "请所有人同时亮出赞成或反对" : "讨论本轮任务队伍"}</h1>
+        <strong>举手</strong>
+        <h1>请在现场表决这支队伍</h1>
         <span>{room.proposedTeam.map((id) => {
           const player = room.players.find((candidate) => candidate.id === id)!;
           return `${player.seat}号 ${player.nickname}`;
@@ -102,6 +106,26 @@ function BoardCenter({ room }: { room: PublicRoomState }) {
         <div className="board-seal-animation" aria-hidden="true"><i /><i /><i /></div>
         <h1>任务队员正在秘密选择</h1>
         <span>不会显示谁已经提交，也不会保留任务票与个人的对应关系。</span>
+      </div>
+    );
+  }
+  if (room.phase === "quest-ready") {
+    return (
+      <div className="board-message">
+        <p>第 {room.missionIndex + 1} 轮任务</p>
+        <div className="board-seal-animation" aria-hidden="true"><i /><i /><i /></div>
+        <h1>任务票已全部封存</h1>
+        <span>等待本轮队长确认揭晓，结果仍然保密。</span>
+      </div>
+    );
+  }
+  if (room.phase === "quest-revealing") {
+    return (
+      <div className="board-message">
+        <p>第 {room.missionIndex + 1} 轮任务</p>
+        <div className="board-seal-animation board-seal-animation--revealing" aria-hidden="true"><i /><i /><i /></div>
+        <h1>任务结果即将揭晓</h1>
+        <span>请看向现场，观察每个人的反应。</span>
       </div>
     );
   }
@@ -154,21 +178,6 @@ function BoardQr({ value }: { value: string }) {
     return () => { cancelled = true; };
   }, [value]);
   return src ? <img className="board-qr" src={src} alt="加入当前房间的二维码" /> : null;
-}
-
-function useBoardCountdown(endsAt: number | null): number {
-  const [remaining, setRemaining] = useState(0);
-  useEffect(() => {
-    if (!endsAt) return;
-    const update = () => setRemaining(Math.max(0, Math.ceil((endsAt - Date.now()) / 1_000)));
-    const initialTimer = window.setTimeout(update, 0);
-    const timer = window.setInterval(update, 100);
-    return () => {
-      window.clearTimeout(initialTimer);
-      window.clearInterval(timer);
-    };
-  }, [endsAt]);
-  return endsAt ? remaining : 0;
 }
 
 function formatRoomCode(code: string): string {

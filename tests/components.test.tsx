@@ -20,17 +20,32 @@ describe("身份与任务票界面", () => {
     expect(confirm).toHaveBeenCalledOnce();
   });
 
-  it("正义方只看到成功票", () => {
-    render(<QuestBallot missionNumber={1} faction="good" onSubmit={vi.fn()} />);
+  it("正义方看到两张票，但失败票明确不可选择", () => {
+    render(<QuestBallot missionNumber={1} faction="good" orderKey="b" onSubmit={vi.fn()} />);
     expect(screen.getByText("任务成功")).toBeInTheDocument();
-    expect(screen.queryByText("任务失败")).not.toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: /任务失败/ })).toBeDisabled();
+    expect(screen.getByText("你的身份不能选择此票")).toBeInTheDocument();
   });
 
   it("邪恶方可以选择失败票并确认", async () => {
     const submit = vi.fn().mockResolvedValue(undefined);
-    render(<QuestBallot missionNumber={2} faction="evil" onSubmit={submit} />);
+    render(<QuestBallot missionNumber={2} faction="evil" orderKey="a" onSubmit={submit} />);
     await userEvent.click(screen.getByRole("radio", { name: /任务失败/ }));
     await userEvent.click(screen.getByRole("button", { name: "确认任务票" }));
     expect(submit).toHaveBeenCalledWith("failure");
+  });
+
+  it("任务票顺序由稳定键决定，能够出现两种上下排列", () => {
+    const first = render(<QuestBallot missionNumber={1} faction="evil" orderKey="a" onSubmit={vi.fn()} />);
+    expect(screen.getAllByRole("radio").map((option) => option.textContent)).toEqual([
+      expect.stringContaining("任务失败"),
+      expect.stringContaining("任务成功"),
+    ]);
+    first.unmount();
+    render(<QuestBallot missionNumber={1} faction="evil" orderKey="b" onSubmit={vi.fn()} />);
+    expect(screen.getAllByRole("radio").map((option) => option.textContent)).toEqual([
+      expect.stringContaining("任务成功"),
+      expect.stringContaining("任务失败"),
+    ]);
   });
 });

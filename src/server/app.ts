@@ -76,6 +76,7 @@ export function createServerApplication(store = new RoomStore()): ServerApplicat
     transports: ["websocket", "polling"],
   });
   const activePlayerSockets = new Map<string, string>();
+  const questRevealTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   app.disable("x-powered-by");
   app.use(express.json({ limit: "16kb" }));
@@ -186,6 +187,23 @@ export function createServerApplication(store = new RoomStore()): ServerApplicat
     }
   }
 
+  function clearQuestRevealTimer(roomCode: string): void {
+    const current = questRevealTimers.get(roomCode);
+    if (current) clearTimeout(current);
+    questRevealTimers.delete(roomCode);
+  }
+
+  function scheduleQuestReveal(roomCode: string, missionIndex: number, durationMs: number): void {
+    clearQuestRevealTimer(roomCode);
+    const timer = setTimeout(() => {
+      questRevealTimers.delete(roomCode);
+      const room = store.findRoom(roomCode);
+      if (room?.completeQuestReveal(missionIndex)) void broadcastRoom(roomCode);
+    }, durationMs);
+    timer.unref();
+    questRevealTimers.set(roomCode, timer);
+  }
+
   function handleCommand<T>(
     socket: TypedSocket,
     action: () => T,
@@ -240,6 +258,7 @@ export function createServerApplication(store = new RoomStore()): ServerApplicat
       try {
         if (!playerId) throw new RoomError("公共屏不能解散桌局", "PLAYER_ONLY", 403);
         store.dissolveRoom(roomCode, playerId);
+        clearQuestRevealTimer(roomCode);
         for (const key of activePlayerSockets.keys()) {
           if (key.startsWith(`${roomCode}:`)) activePlayerSockets.delete(key);
         }
@@ -257,17 +276,30 @@ export function createServerApplication(store = new RoomStore()): ServerApplicat
     socket.on("identity:confirm", (ack) => {
       handleCommand(socket, () => store.getRoom(roomCode).confirmIdentity(playerId!), ack);
     });
+    socket.on("team:draft-toggle", (targetPlayerId, ack) => {
+      handleCommand(socket, () => store.getRoom(roomCode).toggleTeamDraft(playerId!, targetPlayerId), ack);
+    });
+    socket.on("team:draft", (playerIds, ack) => {
+      handleCommand(socket, () => store.getRoom(roomCode).updateTeamDraft(playerId!, playerIds), ack);
+    });
     socket.on("team:propose", (playerIds, ack) => {
       handleCommand(socket, () => store.getRoom(roomCode).proposeTeam(playerId!, playerIds), ack);
-    });
-    socket.on("team-vote:start", (ack) => {
-      handleCommand(socket, () => ({ endsAt: store.getRoom(roomCode).startPublicVote(playerId!) }), ack);
     });
     socket.on("team-vote:record", (rejectCount, ack) => {
       handleCommand(socket, () => ({ approved: store.getRoom(roomCode).recordPublicVote(playerId!, rejectCount) }), ack);
     });
     socket.on("quest:submit", (vote, ack) => {
-      handleCommand(socket, () => store.getRoom(roomCode).submitQuestVote(playerId!, vote), ack);
+      handleCommand(socket, () => {
+        const schedule = store.getRoom(roomCode).submitQuestVote(playerId!, vote);
+        if (schedule) scheduleQuestReveal(roomCode, schedule.missionIndex, schedule.durationMs);
+      }, ack);
+    });
+    socket.on("quest:reveal", (ack) => {
+      handleCommand(socket, () => {
+        const schedule = store.getRoom(roomCode).beginQuestReveal(playerId!);
+        scheduleQuestReveal(roomCode, schedule.missionIndex, schedule.durationMs);
+        return { durationMs: schedule.durationMs };
+      }, ack);
     });
     socket.on("quest:continue", (ack) => {
       handleCommand(socket, () => store.getRoom(roomCode).continueAfterQuest(playerId!), ack);
@@ -277,6 +309,33 @@ export function createServerApplication(store = new RoomStore()): ServerApplicat
     });
     socket.on("game:rematch", (ack) => {
       handleCommand(socket, () => store.getRoom(roomCode).rematch(playerId!), ack);
+    });
+    socket.on("host:remove-player", (targetPlayerId, ack) => {
+      try {
+        if (!playerId) throw new RoomError("公共屏不能管理玩家", "PLAYER_ONLY", 403);
+        store.getRoom(roomCode).removePlayer(playerId, targetPlayerId);
+        const targetKey = `${roomCode}:${targetPlayerId}`;
+        const targetSocketId = activePlayerSockets.get(targetKey);
+        activePlayerSockets.delete(targetKey);
+        const targetSocket = targetSocketId ? io.sockets.sockets.get(targetSocketId) : undefined;
+        targetSocket?.emit("player:removed", { message: "房主已将你移出桌局" });
+        if (targetSocket) {
+          const disconnectTimer = setTimeout(() => targetSocket.disconnect(true), 50);
+          disconnectTimer.unref();
+        }
+        acknowledge(ack, ok(undefined));
+        void broadcastRoom(roomCode);
+      } catch (error) {
+        const result = failure(error) as ApiResult<void>;
+        acknowledge(ack, result);
+        if (!result.ok) socket.emit("room:error", result.error);
+      }
+    });
+    socket.on("host:reset-game", (ack) => {
+      handleCommand(socket, () => {
+        store.getRoom(roomCode).resetToLobby(playerId!);
+        clearQuestRevealTimer(roomCode);
+      }, ack);
     });
 
     socket.on("disconnect", () => {

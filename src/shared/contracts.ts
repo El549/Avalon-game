@@ -19,6 +19,8 @@ export type GamePhase =
   | "team-building"
   | "team-voting"
   | "quest-voting"
+  | "quest-ready"
+  | "quest-revealing"
   | "quest-result"
   | "assassination"
   | "complete";
@@ -68,12 +70,14 @@ export interface PublicRoomState {
   missionIndex: number;
   missions: PublicMission[];
   rejectionCount: number;
+  draftTeam: string[];
   proposedTeam: string[];
-  voteCountdownEndsAt: number | null;
+  questRevealEndsAt: number | null;
   lastQuestResult: { outcome: MissionOutcome; failCount: number; ballots: MissionOutcome[] } | null;
   winner: Winner | null;
   assassinationTargetId: string | null;
   revealedRoles: RevealedRole[];
+  serverTime: number;
   version: number;
 }
 
@@ -90,10 +94,10 @@ export interface PrivatePlayerState {
   knownPlayers: KnownPlayer[];
   canConfirmIdentity: boolean;
   canProposeTeam: boolean;
-  canStartPublicVote: boolean;
   canRecordPublicVote: boolean;
   canSubmitQuest: boolean;
   questVoteSubmitted: boolean;
+  canRevealQuest: boolean;
   canContinueAfterQuest: boolean;
   canAssassinate: boolean;
   canRematch: boolean;
@@ -123,13 +127,17 @@ export interface ClientToServerEvents {
   "room:dissolve": (ack: CommandAck) => void;
   "game:start": (ack: CommandAck) => void;
   "identity:confirm": (ack: CommandAck) => void;
+  "team:draft-toggle": (playerId: string, ack: CommandAck) => void;
+  "team:draft": (playerIds: string[], ack: CommandAck) => void;
   "team:propose": (playerIds: string[], ack: CommandAck) => void;
-  "team-vote:start": (ack: CommandAck<{ endsAt: number }>) => void;
   "team-vote:record": (rejectCount: number, ack: CommandAck<{ approved: boolean }>) => void;
   "quest:submit": (vote: MissionOutcome, ack: CommandAck) => void;
+  "quest:reveal": (ack: CommandAck<{ durationMs: number }>) => void;
   "quest:continue": (ack: CommandAck) => void;
   "assassination:select": (targetPlayerId: string, ack: CommandAck) => void;
   "game:rematch": (ack: CommandAck) => void;
+  "host:remove-player": (targetPlayerId: string, ack: CommandAck) => void;
+  "host:reset-game": (ack: CommandAck) => void;
 }
 
 export interface ServerToClientEvents {
@@ -137,6 +145,7 @@ export interface ServerToClientEvents {
   "player:private": (state: PrivatePlayerState) => void;
   "room:error": (message: string) => void;
   "room:closed": (notice: { reason: "dissolved"; message: string }) => void;
+  "player:removed": (notice: { message: string }) => void;
 }
 
 export type InterServerEvents = Record<never, never>;

@@ -16,7 +16,7 @@ export interface RoomSocketState {
   privateState: PrivatePlayerState | null;
   connected: boolean;
   error: string | null;
-  closedNotice: "dissolved" | "unavailable" | null;
+  closedNotice: "dissolved" | "unavailable" | "removed" | "session-invalid" | null;
 }
 
 export function useRoomSocket(
@@ -50,12 +50,22 @@ export function useRoomSocket(
         ...current,
         connected: false,
         error: error.message,
-        closedNotice: code === "ROOM_NOT_FOUND" ? "unavailable" : current.closedNotice,
+        closedNotice:
+          code === "ROOM_NOT_FOUND"
+            ? "unavailable"
+            : code === "INVALID_SESSION"
+              ? "session-invalid"
+              : current.closedNotice,
       }));
     });
     socket.on("room:error", (error) => setState((current) => ({ ...current, error })));
     socket.on("room:closed", () => setState((current) => ({ ...current, closedNotice: "dissolved" })));
-    socket.on("room:public", (publicState) => setState((current) => ({ ...current, publicState })));
+    socket.on("player:removed", () => setState((current) => ({ ...current, closedNotice: "removed" })));
+    socket.on("room:public", (publicState) => setState((current) => (
+      current.publicState && current.publicState.version > publicState.version
+        ? current
+        : { ...current, publicState }
+    )));
     socket.on("player:private", (privateState) => setState((current) => ({ ...current, privateState })));
     return () => {
       socket.removeAllListeners();
@@ -72,7 +82,17 @@ export function useRoomSocket(
           reject(new Error("连接已断开，正在重试"));
           return;
         }
-        const ack = (result: ApiResult<T>) => {
+        let settled = false;
+        const finish = (result: ApiResult<T> | null, fallbackError?: string) => {
+          if (settled) return;
+          settled = true;
+          socket.off("disconnect", onDisconnect);
+          if (!result) {
+            const message = fallbackError ?? "操作未确认，请检查当前页面后重试";
+            setState((current) => ({ ...current, error: message }));
+            reject(new Error(message));
+            return;
+          }
           if (result.ok) {
             setState((current) => ({ ...current, error: null }));
             resolve(result.data);
@@ -81,7 +101,17 @@ export function useRoomSocket(
             reject(new Error(result.error));
           }
         };
-        (socket.emit as (...emitArgs: unknown[]) => void)(event, ...args, ack);
+        const onDisconnect = () => finish(null, "连接中断，请确认当前状态后重试");
+        socket.once("disconnect", onDisconnect);
+        const timedSocket = socket.timeout(5_000);
+        const ack = (timeoutError: Error | null, result?: ApiResult<T>) => {
+          finish(timeoutError ? null : result ?? null);
+        };
+        try {
+          (timedSocket.emit as (...emitArgs: unknown[]) => void)(event, ...args, ack);
+        } catch {
+          finish(null);
+        }
       }),
     [],
   );

@@ -5,6 +5,16 @@ interface RoomSessionResponse {
   snapshot: SessionSnapshot;
 }
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly code?: string,
+  ) {
+    super(message);
+  }
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
@@ -14,7 +24,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     },
   });
   const result = (await response.json()) as ApiResult<T>;
-  if (!result.ok) throw new Error(result.error);
+  if (!result.ok) throw new ApiError(result.error, response.status, result.code);
   return result.data;
 }
 

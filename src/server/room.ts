@@ -49,6 +49,13 @@ const EXPERIENCE_PLAYERS = [
   { nickname: "模拟骑士B", seat: 4 },
   { nickname: "模拟骑士C", seat: 5 },
 ];
+const QUEST_REVEAL_DURATION_MS = 3_000;
+
+export interface QuestRevealSchedule {
+  missionIndex: number;
+  durationMs: number;
+  endsAt: number;
+}
 
 function createToken(): string {
   return randomBytes(24).toString("base64url");
@@ -66,8 +73,9 @@ export class GameRoom {
   private missionIndex = 0;
   private missions: MissionRecord[];
   private rejectionCount = 0;
+  private draftTeam: string[] = [];
   private proposedTeam: string[] = [];
-  private voteCountdownEndsAt: number | null = null;
+  private questRevealEndsAt: number | null = null;
   private questVotes: Record<string, MissionOutcome> = {};
   private lastQuestResult: PublicRoomState["lastQuestResult"] = null;
   private winner: Winner | null = null;
@@ -147,8 +155,9 @@ export class GameRoom {
   }
 
   private resetRoundState(): void {
+    this.draftTeam = [];
     this.proposedTeam = [];
-    this.voteCountdownEndsAt = null;
+    this.questRevealEndsAt = null;
     this.questVotes = {};
     this.lastQuestResult = null;
   }
@@ -167,7 +176,7 @@ export class GameRoom {
   private finish(winner: Winner): void {
     this.winner = winner;
     this.phase = "complete";
-    this.voteCountdownEndsAt = null;
+    this.questRevealEndsAt = null;
   }
 
   addPlayer(nickname: string, seat: number, isHost = false, isSimulated = false): SessionCredentials {
@@ -247,9 +256,44 @@ export class GameRoom {
     this.touch();
   }
 
+  removePlayer(hostId: string, targetPlayerId: string): void {
+    if (this.phase !== "lobby") throw new RoomError("游戏开始后不能移出玩家", "INVALID_PHASE");
+    this.requireHost(hostId);
+    const target = this.requirePlayer(targetPlayerId);
+    if (target.isHost) throw new RoomError("房主不能移出自己", "CANNOT_REMOVE_HOST", 403);
+    if (target.isSimulated) throw new RoomError("不能移出流程体验的模拟玩家", "SIMULATED_PLAYER", 403);
+    this.players = this.players.filter((player) => player.id !== targetPlayerId);
+    this.touch();
+  }
+
   assertCanDissolve(playerId: string): void {
     if (this.phase !== "lobby") throw new RoomError("游戏开始后不能直接解散，请与全桌确认", "INVALID_PHASE");
     this.requireHost(playerId);
+  }
+
+  resetToLobby(playerId: string): void {
+    this.requireHost(playerId);
+    if (this.phase === "lobby") throw new RoomError("当前已经在候场阶段", "INVALID_PHASE");
+    this.phase = "lobby";
+    this.leaderSeat = null;
+    this.missionIndex = 0;
+    this.missions = getMissionConfig(this.settings.playerCount).map((config, index) => ({
+      number: index + 1,
+      ...config,
+      outcome: null,
+      failCount: null,
+      teamPlayerIds: [],
+    }));
+    this.rejectionCount = 0;
+    this.winner = null;
+    this.assassinationTargetId = null;
+    this.resetRoundState();
+    this.players.forEach((player) => {
+      player.role = null;
+      player.identityConfirmed = false;
+      player.ready = player.isSimulated;
+    });
+    this.touch();
   }
 
   startGame(playerId: string): void {
@@ -282,26 +326,37 @@ export class GameRoom {
         candidate.identityConfirmed = true;
       });
     }
-    if (this.players.every((candidate) => candidate.identityConfirmed)) this.phase = "team-building";
+    if (this.players.every((candidate) => candidate.identityConfirmed)) {
+      this.phase = "team-building";
+      this.prepareTeamBuilding();
+    }
+    this.touch();
+  }
+
+  updateTeamDraft(playerId: string, playerIds: string[]): void {
+    const uniqueIds = this.validateTeamSelection(playerId, playerIds, false);
+    this.draftTeam = uniqueIds;
+    this.touch();
+  }
+
+  toggleTeamDraft(playerId: string, targetPlayerId: string): void {
+    const next = this.draftTeam.includes(targetPlayerId)
+      ? this.draftTeam.filter((id) => id !== targetPlayerId)
+      : [...this.draftTeam, targetPlayerId];
+    this.draftTeam = this.validateTeamSelection(playerId, next, false);
     this.touch();
   }
 
   proposeTeam(playerId: string, playerIds: string[]): void {
-    if (this.phase !== "team-building") throw new RoomError("现在不能提交任务队伍", "INVALID_PHASE");
-    const leader = this.requirePlayer(playerId);
-    if (leader.seat !== this.leaderSeat) throw new RoomError("只有当前队长可以组队", "LEADER_ONLY", 403);
-    const requiredSize = this.missions[this.missionIndex].teamSize;
-    const uniqueIds = [...new Set(playerIds)];
-    if (uniqueIds.length !== requiredSize) throw new RoomError(`本轮必须选择 ${requiredSize} 人`, "WRONG_TEAM_SIZE");
-    uniqueIds.forEach((id) => this.requirePlayer(id));
+    const uniqueIds = this.validateTeamSelection(playerId, playerIds, true);
     if (this.settings.mode === "experience") {
       const humanPlayerIds = this.players.filter((candidate) => !candidate.isSimulated).map((candidate) => candidate.id);
       if (!humanPlayerIds.every((id) => uniqueIds.includes(id))) {
         throw new RoomError("流程体验需要把两位真人都加入任务队伍", "EXPERIENCE_HUMANS_REQUIRED");
       }
     }
+    this.draftTeam = uniqueIds;
     this.proposedTeam = uniqueIds;
-    this.voteCountdownEndsAt = null;
     if (this.settings.rejectionRule === "fifth-auto" && this.rejectionCount === 4) {
       this.rejectionCount = 0;
       this.phase = "quest-voting";
@@ -312,22 +367,26 @@ export class GameRoom {
     this.touch();
   }
 
-  startPublicVote(playerId: string): number {
-    if (this.phase !== "team-voting") throw new RoomError("现在不是公开表决阶段", "INVALID_PHASE");
-    if (!this.canControlPublicFlow(playerId)) throw new RoomError("只有房主或当前队长可以开始表决", "CONTROL_ONLY", 403);
-    if (this.voteCountdownEndsAt && this.voteCountdownEndsAt > this.now()) return this.voteCountdownEndsAt;
-    this.voteCountdownEndsAt = this.now() + 3_200;
-    this.touch();
-    return this.voteCountdownEndsAt;
+  private validateTeamSelection(playerId: string, playerIds: string[], requireFull: boolean): string[] {
+    if (this.phase !== "team-building") throw new RoomError("现在不能选择任务队伍", "INVALID_PHASE");
+    const leader = this.requirePlayer(playerId);
+    if (leader.seat !== this.leaderSeat) throw new RoomError("只有当前队长可以组队", "LEADER_ONLY", 403);
+    const uniqueIds = [...new Set(playerIds)];
+    if (uniqueIds.length !== playerIds.length) throw new RoomError("任务队伍不能重复选择同一名玩家", "DUPLICATE_TEAM_MEMBER");
+    const requiredSize = this.missions[this.missionIndex].teamSize;
+    if (requireFull && uniqueIds.length !== requiredSize) throw new RoomError(`本轮必须选择 ${requiredSize} 人`, "WRONG_TEAM_SIZE");
+    if (!requireFull && uniqueIds.length > requiredSize) throw new RoomError(`本轮最多选择 ${requiredSize} 人`, "WRONG_TEAM_SIZE");
+    uniqueIds.forEach((id) => this.requirePlayer(id));
+    return uniqueIds;
   }
 
   recordPublicVote(playerId: string, rejectCount: number): boolean {
     if (this.phase !== "team-voting") throw new RoomError("现在不是公开表决阶段", "INVALID_PHASE");
     if (!this.canControlPublicFlow(playerId)) throw new RoomError("只有房主或当前队长可以记录结果", "CONTROL_ONLY", 403);
-    if (!this.voteCountdownEndsAt) throw new RoomError("请先进行同时亮票倒计时", "COUNTDOWN_REQUIRED");
-    if (this.now() < this.voteCountdownEndsAt) throw new RoomError("请等待倒计时结束", "COUNTDOWN_RUNNING");
+    if (!Number.isInteger(rejectCount) || rejectCount < 0 || rejectCount > this.settings.playerCount) {
+      throw new RoomError("反对人数无效", "INVALID_REJECT_COUNT");
+    }
     const approved = teamIsApproved(rejectCount, this.settings.playerCount);
-    this.voteCountdownEndsAt = null;
     if (approved) {
       this.rejectionCount = 0;
       this.questVotes = {};
@@ -339,16 +398,16 @@ export class GameRoom {
         this.finish("evil");
       } else {
         this.leaderSeat = this.nextLeaderSeat();
-        this.proposedTeam = [];
+        this.resetRoundState();
         this.phase = "team-building";
-        this.proposeExperienceTeamIfNeeded();
+        this.prepareTeamBuilding();
       }
     }
     this.touch();
     return approved;
   }
 
-  submitQuestVote(playerId: string, vote: MissionOutcome): void {
+  submitQuestVote(playerId: string, vote: MissionOutcome): QuestRevealSchedule | null {
     if (this.phase !== "quest-voting") throw new RoomError("现在不是任务投票阶段", "INVALID_PHASE");
     const player = this.requirePlayer(playerId);
     if (!this.proposedTeam.includes(playerId)) throw new RoomError("你不在本轮任务队伍中", "NOT_ON_QUEST", 403);
@@ -358,8 +417,13 @@ export class GameRoom {
       throw new RoomError("正义方只能提交任务成功", "ILLEGAL_QUEST_VOTE", 403);
     }
     this.questVotes[playerId] = vote;
-    if (Object.keys(this.questVotes).length === this.proposedTeam.length) this.resolveQuest();
+    let schedule: QuestRevealSchedule | null = null;
+    if (Object.keys(this.questVotes).length === this.proposedTeam.length) {
+      this.phase = "quest-ready";
+      schedule = this.beginSimulatedQuestRevealIfNeeded();
+    }
     this.touch();
+    return schedule;
   }
 
   private submitExperienceVotes(): void {
@@ -369,15 +433,52 @@ export class GameRoom {
     }
   }
 
-  private proposeExperienceTeamIfNeeded(): void {
-    if (this.settings.mode !== "experience" || this.phase !== "team-building") return;
+  private prepareTeamBuilding(): void {
+    if (this.phase !== "team-building") return;
+    if (this.settings.mode !== "experience") {
+      this.draftTeam = [];
+      return;
+    }
+    const humanPlayers = this.players.filter((candidate) => !candidate.isSimulated);
+    this.draftTeam = humanPlayers.map((candidate) => candidate.id);
     const leader = this.players.find((candidate) => candidate.seat === this.leaderSeat);
     if (!leader?.isSimulated) return;
     const requiredSize = this.missions[this.missionIndex].teamSize;
-    const humanPlayers = this.players.filter((candidate) => !candidate.isSimulated);
     const simulatedPlayers = this.players.filter((candidate) => candidate.isSimulated);
     const team = [...humanPlayers, ...simulatedPlayers].slice(0, requiredSize).map((candidate) => candidate.id);
     this.proposeTeam(leader.id, team);
+  }
+
+  private beginSimulatedQuestRevealIfNeeded(): QuestRevealSchedule | null {
+    if (this.settings.mode !== "experience" || this.phase !== "quest-ready") return null;
+    const leader = this.players.find((candidate) => candidate.seat === this.leaderSeat);
+    return leader?.isSimulated ? this.startQuestReveal() : null;
+  }
+
+  beginQuestReveal(playerId: string): QuestRevealSchedule {
+    if (this.phase !== "quest-ready") throw new RoomError("任务票尚未全部封存或已经开始揭晓", "INVALID_PHASE");
+    const player = this.requirePlayer(playerId);
+    if (player.seat !== this.leaderSeat) throw new RoomError("只有本轮队长可以确认揭晓", "LEADER_ONLY", 403);
+    const schedule = this.startQuestReveal();
+    this.touch();
+    return schedule;
+  }
+
+  private startQuestReveal(): QuestRevealSchedule {
+    this.phase = "quest-revealing";
+    this.questRevealEndsAt = this.now() + QUEST_REVEAL_DURATION_MS;
+    return {
+      missionIndex: this.missionIndex,
+      durationMs: QUEST_REVEAL_DURATION_MS,
+      endsAt: this.questRevealEndsAt,
+    };
+  }
+
+  completeQuestReveal(missionIndex: number): boolean {
+    if (this.phase !== "quest-revealing" || this.missionIndex !== missionIndex) return false;
+    this.resolveQuest();
+    this.touch();
+    return true;
   }
 
   private resolveQuest(): void {
@@ -389,6 +490,7 @@ export class GameRoom {
     mission.failCount = failCount;
     mission.teamPlayerIds = [...this.proposedTeam];
     this.lastQuestResult = { outcome, failCount, ballots };
+    this.questRevealEndsAt = null;
     this.phase = "quest-result";
   }
 
@@ -406,7 +508,7 @@ export class GameRoom {
       this.missionIndex += 1;
       this.resetRoundState();
       this.phase = "team-building";
-      this.proposeExperienceTeamIfNeeded();
+      this.prepareTeamBuilding();
     }
     this.touch();
   }
@@ -472,8 +574,9 @@ export class GameRoom {
       missionIndex: this.missionIndex,
       missions: this.missions.map((mission) => ({ ...mission, teamPlayerIds: [...mission.teamPlayerIds] })),
       rejectionCount: this.rejectionCount,
+      draftTeam: [...this.draftTeam],
       proposedTeam: [...this.proposedTeam],
-      voteCountdownEndsAt: this.voteCountdownEndsAt,
+      questRevealEndsAt: this.questRevealEndsAt,
       lastQuestResult: this.lastQuestResult
         ? { ...this.lastQuestResult, ballots: [...this.lastQuestResult.ballots] }
         : null,
@@ -487,6 +590,7 @@ export class GameRoom {
               faction: factionForRole(player.role!),
             }))
           : [],
+      serverTime: this.now(),
       version: this.version,
     };
   }
@@ -505,13 +609,12 @@ export class GameRoom {
       knownPlayers: role ? knownPlayersFor(playerId, role, knowledgeSource) : [],
       canConfirmIdentity: this.phase === "identity" && !player.identityConfirmed,
       canProposeTeam: this.phase === "team-building" && player.seat === this.leaderSeat,
-      canStartPublicVote:
-        this.phase === "team-voting" && this.canControlPublicFlow(playerId) && !this.voteCountdownEndsAt,
       canRecordPublicVote:
-        this.phase === "team-voting" && this.canControlPublicFlow(playerId) && this.voteCountdownEndsAt !== null,
+        this.phase === "team-voting" && this.canControlPublicFlow(playerId),
       canSubmitQuest:
         this.phase === "quest-voting" && this.proposedTeam.includes(playerId) && !this.questVotes[playerId],
       questVoteSubmitted: Boolean(this.questVotes[playerId]),
+      canRevealQuest: this.phase === "quest-ready" && player.seat === this.leaderSeat,
       canContinueAfterQuest: this.phase === "quest-result" && this.canControlPublicFlow(playerId),
       canAssassinate: this.phase === "assassination" && player.role === "assassin",
       canRematch: this.phase === "complete" && player.isHost,
