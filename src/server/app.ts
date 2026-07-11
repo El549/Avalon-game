@@ -43,6 +43,12 @@ function failure(error: unknown): { ok: false; error: string; code?: string } {
   return { ok: false, error: "操作失败，请稍后重试", code: "INTERNAL" };
 }
 
+function acknowledge<T>(ack: unknown, result: ApiResult<T>): void {
+  if (typeof ack === "function") {
+    (ack as (value: ApiResult<T>) => void)(result);
+  }
+}
+
 function sendError(res: Response, error: unknown): void {
   if (error instanceof RoomError) {
     res.status(error.status).json(failure(error));
@@ -85,7 +91,21 @@ export function createServerApplication(store = new RoomStore()): ServerApplicat
         playerCount: input.playerCount,
         rolePreset: input.rolePreset,
         rejectionRule: input.rejectionRule,
+        mode: "standard",
       });
+      res.status(201).json(ok<{ credentials: SessionCredentials; snapshot: SessionSnapshot }>({
+        credentials,
+        snapshot: room.snapshotFor(credentials.playerId),
+      }));
+    } catch (error) {
+      sendError(res, error);
+    }
+  });
+
+  app.post("/api/rooms/experience", (req, res) => {
+    try {
+      const input = z.object({ nickname: nicknameSchema }).parse(req.body);
+      const { room, credentials } = store.createExperienceRoom(input.nickname);
       res.status(201).json(ok<{ credentials: SessionCredentials; snapshot: SessionSnapshot }>({
         credentials,
         snapshot: room.snapshotFor(credentials.playerId),
@@ -148,31 +168,36 @@ export function createServerApplication(store = new RoomStore()): ServerApplicat
       next();
     } catch (error) {
       const result = failure(error);
-      next(new Error(result.error));
+      const connectionError = new Error(result.error) as Error & { data?: { code?: string } };
+      connectionError.data = { code: result.code };
+      next(connectionError);
     }
   });
 
   async function broadcastRoom(roomCode: string): Promise<void> {
-    const room = store.getRoom(roomCode);
+    const room = store.findRoom(roomCode);
+    if (!room) return;
     const sockets = await io.in(roomCode).fetchSockets();
     for (const socket of sockets) {
       socket.emit("room:public", room.publicState());
-      if (socket.data.playerId) socket.emit("player:private", room.privateState(socket.data.playerId));
+      if (socket.data.playerId && room.hasPlayer(socket.data.playerId)) {
+        socket.emit("player:private", room.privateState(socket.data.playerId));
+      }
     }
   }
 
   function handleCommand<T>(
     socket: TypedSocket,
     action: () => T,
-    ack: (result: ApiResult<T>) => void,
+    ack: unknown,
   ): void {
     try {
       const data = action();
-      ack(ok(data));
+      acknowledge(ack, ok(data));
       void broadcastRoom(socket.data.roomCode);
     } catch (error) {
       const result = failure(error) as ApiResult<T>;
-      ack(result);
+      acknowledge(ack, result);
       if (!result.ok) socket.emit("room:error", result.error);
     }
   }
@@ -192,37 +217,66 @@ export function createServerApplication(store = new RoomStore()): ServerApplicat
     void broadcastRoom(roomCode);
 
     socket.on("player:ready", (ready, ack) => {
-      handleCommand(socket, () => room.setReady(playerId!, ready), ack);
+      handleCommand(socket, () => store.getRoom(roomCode).setReady(playerId!, ready), ack);
     });
     socket.on("player:seat", (seat, ack) => {
-      handleCommand(socket, () => room.changeSeat(playerId!, seat), ack);
+      handleCommand(socket, () => store.getRoom(roomCode).changeSeat(playerId!, seat), ack);
+    });
+    socket.on("player:leave", (ack) => {
+      try {
+        if (!playerId) throw new RoomError("公共屏不能离开座位", "PLAYER_ONLY", 403);
+        store.getRoom(roomCode).leave(playerId);
+        activePlayerSockets.delete(`${roomCode}:${playerId}`);
+        socket.leave(roomCode);
+        acknowledge(ack, ok(undefined));
+        void broadcastRoom(roomCode);
+      } catch (error) {
+        const result = failure(error) as ApiResult<void>;
+        acknowledge(ack, result);
+        if (!result.ok) socket.emit("room:error", result.error);
+      }
+    });
+    socket.on("room:dissolve", (ack) => {
+      try {
+        if (!playerId) throw new RoomError("公共屏不能解散桌局", "PLAYER_ONLY", 403);
+        store.dissolveRoom(roomCode, playerId);
+        for (const key of activePlayerSockets.keys()) {
+          if (key.startsWith(`${roomCode}:`)) activePlayerSockets.delete(key);
+        }
+        acknowledge(ack, ok(undefined));
+        io.to(roomCode).emit("room:closed", { reason: "dissolved", message: "房主已解散桌局" });
+      } catch (error) {
+        const result = failure(error) as ApiResult<void>;
+        acknowledge(ack, result);
+        if (!result.ok) socket.emit("room:error", result.error);
+      }
     });
     socket.on("game:start", (ack) => {
-      handleCommand(socket, () => room.startGame(playerId!), ack);
+      handleCommand(socket, () => store.getRoom(roomCode).startGame(playerId!), ack);
     });
     socket.on("identity:confirm", (ack) => {
-      handleCommand(socket, () => room.confirmIdentity(playerId!), ack);
+      handleCommand(socket, () => store.getRoom(roomCode).confirmIdentity(playerId!), ack);
     });
     socket.on("team:propose", (playerIds, ack) => {
-      handleCommand(socket, () => room.proposeTeam(playerId!, playerIds), ack);
+      handleCommand(socket, () => store.getRoom(roomCode).proposeTeam(playerId!, playerIds), ack);
     });
     socket.on("team-vote:start", (ack) => {
-      handleCommand(socket, () => ({ endsAt: room.startPublicVote(playerId!) }), ack);
+      handleCommand(socket, () => ({ endsAt: store.getRoom(roomCode).startPublicVote(playerId!) }), ack);
     });
     socket.on("team-vote:record", (rejectCount, ack) => {
-      handleCommand(socket, () => ({ approved: room.recordPublicVote(playerId!, rejectCount) }), ack);
+      handleCommand(socket, () => ({ approved: store.getRoom(roomCode).recordPublicVote(playerId!, rejectCount) }), ack);
     });
     socket.on("quest:submit", (vote, ack) => {
-      handleCommand(socket, () => room.submitQuestVote(playerId!, vote), ack);
+      handleCommand(socket, () => store.getRoom(roomCode).submitQuestVote(playerId!, vote), ack);
     });
     socket.on("quest:continue", (ack) => {
-      handleCommand(socket, () => room.continueAfterQuest(playerId!), ack);
+      handleCommand(socket, () => store.getRoom(roomCode).continueAfterQuest(playerId!), ack);
     });
     socket.on("assassination:select", (targetPlayerId, ack) => {
-      handleCommand(socket, () => room.selectAssassinationTarget(playerId!, targetPlayerId), ack);
+      handleCommand(socket, () => store.getRoom(roomCode).selectAssassinationTarget(playerId!, targetPlayerId), ack);
     });
     socket.on("game:rematch", (ack) => {
-      handleCommand(socket, () => room.rematch(playerId!), ack);
+      handleCommand(socket, () => store.getRoom(roomCode).rematch(playerId!), ack);
     });
 
     socket.on("disconnect", () => {
@@ -230,7 +284,9 @@ export function createServerApplication(store = new RoomStore()): ServerApplicat
       const activeKey = `${roomCode}:${playerId}`;
       if (activePlayerSockets.get(activeKey) !== socket.id) return;
       activePlayerSockets.delete(activeKey);
-      room.setConnected(playerId, false);
+      const currentRoom = store.findRoom(roomCode);
+      if (!currentRoom?.hasPlayer(playerId)) return;
+      currentRoom.setConnected(playerId, false);
       void broadcastRoom(roomCode);
     });
   });

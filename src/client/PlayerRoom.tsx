@@ -11,7 +11,13 @@ import { useRoomSocket } from "./useRoomSocket";
 
 export function PlayerRoom({ roomCode }: { roomCode: string }) {
   const credentials = useMemo(() => loadCredentials(roomCode), [roomCode]);
-  const { publicState, privateState, connected, error, command, clearError } = useRoomSocket(roomCode, "player", credentials);
+  const { publicState, privateState, connected, error, closedNotice, command, clearError } = useRoomSocket(roomCode, "player", credentials);
+
+  useEffect(() => {
+    if (!closedNotice) return;
+    clearCredentials(roomCode);
+    window.location.assign(`/?notice=${closedNotice}`);
+  }, [closedNotice, roomCode]);
 
   if (!credentials) return <SessionMissing roomCode={roomCode} />;
   if (!publicState || !privateState) {
@@ -37,6 +43,9 @@ export function PlayerRoom({ roomCode }: { roomCode: string }) {
       </header>
       <ConnectionNotice connected={connected} error={error} />
       {error && <button type="button" className="dismiss-error" aria-label="关闭错误提示" onClick={clearError}>×</button>}
+      {publicState.settings.mode === "experience" && (
+        <aside className="experience-strip">完整流程体验 · 三名模拟玩家会自动完成其余操作</aside>
+      )}
       <PlayerPhase
         room={publicState}
         privateState={privateState}
@@ -104,10 +113,25 @@ function Lobby({
   command: <T>(event: any, ...args: unknown[]) => Promise<T>;
 }) {
   const [changingSeat, setChangingSeat] = useState(false);
+  const [exitAction, setExitAction] = useState<"leave" | "dissolve" | null>(null);
+  const [exiting, setExiting] = useState(false);
   const everyoneReady = room.players.length === room.settings.playerCount && room.players.every((player) => player.ready && player.connected);
   const joinUrl = `${window.location.origin}/?room=${room.code}`;
+  const isExperience = room.settings.mode === "experience";
   const openSeats = Array.from({ length: room.settings.playerCount }, (_, index) => index + 1)
     .filter((seat) => !room.players.some((player) => player.seat === seat));
+
+  const confirmExit = async () => {
+    if (!exitAction) return;
+    setExiting(true);
+    try {
+      await command(exitAction === "dissolve" ? "room:dissolve" : "player:leave");
+      clearCredentials(room.code);
+      window.location.assign(`/?notice=${exitAction === "dissolve" ? "dissolved" : "left"}`);
+    } catch {
+      setExiting(false);
+    }
+  };
   return (
     <main className="lobby-screen">
       <header className="phase-heading">
@@ -116,6 +140,12 @@ function Lobby({
         <span>{room.players.length} / {room.settings.playerCount} 已就座</span>
       </header>
       <RoundTable players={room.players} playerCount={room.settings.playerCount} currentPlayerId={me.id} />
+      {isExperience && (
+        <div className="experience-lobby-note">
+          <strong>第二台手机请扫码加入 2 号位</strong>
+          <span>两位真人准备后即可开始，模拟玩家已经就位。</span>
+        </div>
+      )}
       <div className="lobby-status" aria-label="准备状态">
         {room.players.map((player) => (
           <span key={player.id} className={player.ready ? "is-ready" : ""}>{player.seat}号 {player.ready ? "已准备" : "未准备"}</span>
@@ -140,22 +170,36 @@ function Lobby({
           <span>换座后需要重新确认准备。</span>
         </div>
       )}
-      {openSeats.length > 0 && (
+      {!isExperience && openSeats.length > 0 && (
         <button type="button" className="text-link" onClick={() => setChangingSeat((value) => !value)}>
           {changingSeat ? "取消换座" : "换一个座位"}
         </button>
       )}
-      {me.isHost && <QrCode value={joinUrl} />}
+      {me.isHost && <QrCode value={joinUrl} label={isExperience ? "第二台手机扫码加入体验" : "扫码加入桌局"} />}
       <button type="button" className={me.ready ? "secondary-button" : "primary-button"} onClick={() => runCommand(command("player:ready", !me.ready))}>
         {me.ready ? "取消准备" : "确认座位并准备"}
       </button>
       {me.isHost && (
         <>
           <button type="button" className="primary-button" disabled={!everyoneReady} onClick={() => runCommand(command("game:start"))}>
-            开始分配身份
+            {isExperience ? "开始完整流程体验" : "开始分配身份"}
           </button>
           <a className="text-link" href={`/room/${room.code}/board`} target="_blank" rel="noreferrer">打开桌面公共屏</a>
         </>
+      )}
+      {!exitAction ? (
+        <button type="button" className="text-link lobby-exit-trigger" onClick={() => setExitAction(me.isHost ? "dissolve" : "leave")}>
+          {me.isHost ? "解散房间并重新创建" : "离开房间"}
+        </button>
+      ) : (
+        <div className="lobby-exit-confirm" role="alertdialog" aria-label={exitAction === "dissolve" ? "确认解散房间" : "确认离开房间"}>
+          <strong>{exitAction === "dissolve" ? "确定解散这个房间？" : "确定离开这个房间？"}</strong>
+          <p>{exitAction === "dissolve" ? "所有人会回到首页，旧房间号立即失效。" : "你的座位会立即释放，之后需要重新选择座位加入。"}</p>
+          <button type="button" className="danger-button" disabled={exiting} onClick={() => void confirmExit()}>
+            {exiting ? "正在处理…" : exitAction === "dissolve" ? "确认解散并返回首页" : "确认离开并释放座位"}
+          </button>
+          <button type="button" className="text-link" disabled={exiting} onClick={() => setExitAction(null)}>继续等待</button>
+        </div>
       )}
     </main>
   );
@@ -170,7 +214,9 @@ function TeamBuilding({
   privateState: PrivatePlayerState;
   command: <T>(event: any, ...args: unknown[]) => Promise<T>;
 }) {
-  const [selected, setSelected] = useState<string[]>([]);
+  const [selected, setSelected] = useState<string[]>(() => room.settings.mode === "experience"
+    ? room.players.filter((player) => !player.isSimulated).map((player) => player.id)
+    : []);
   const mission = room.missions[room.missionIndex];
   const leader = room.players.find((player) => player.seat === room.leaderSeat);
   const toggle = (playerId: string) => {
@@ -371,7 +417,7 @@ function SessionMissing({ roomCode }: { roomCode: string }) {
   );
 }
 
-function QrCode({ value }: { value: string }) {
+function QrCode({ value, label }: { value: string; label: string }) {
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -381,7 +427,7 @@ function QrCode({ value }: { value: string }) {
     return () => { cancelled = true; };
   }, [value]);
   if (!src) return null;
-  return <div className="qr-code"><img src={src} alt="加入当前房间的二维码" /><span>扫码加入桌局</span></div>;
+  return <div className="qr-code"><img src={src} alt="加入当前房间的二维码" /><span>{label}</span></div>;
 }
 
 function useCountdown(endsAt: number | null): number {

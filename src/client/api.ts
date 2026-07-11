@@ -27,6 +27,10 @@ export function createRoom(input: {
   return request("/api/rooms", { method: "POST", body: JSON.stringify(input) });
 }
 
+export function createExperienceRoom(nickname: string): Promise<RoomSessionResponse> {
+  return request("/api/rooms/experience", { method: "POST", body: JSON.stringify({ nickname }) });
+}
+
 export function joinRoom(code: string, input: { nickname: string; seat: number }): Promise<RoomSessionResponse> {
   return request(`/api/rooms/${code}/join`, { method: "POST", body: JSON.stringify(input) });
 }

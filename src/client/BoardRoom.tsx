@@ -7,7 +7,10 @@ import { RoundTable } from "./components/RoundTable";
 import { useRoomSocket } from "./useRoomSocket";
 
 export function BoardRoom({ roomCode }: { roomCode: string }) {
-  const { publicState, connected, error } = useRoomSocket(roomCode, "board");
+  const { publicState, connected, error, closedNotice } = useRoomSocket(roomCode, "board");
+  useEffect(() => {
+    if (closedNotice) window.location.assign(`/?notice=${closedNotice}`);
+  }, [closedNotice]);
   if (!publicState) {
     return <main className="board-loading"><Brand /><p>{error ?? "正在连接桌局…"}</p></main>;
   }
@@ -47,8 +50,15 @@ function BoardCenter({ room }: { room: PublicRoomState }) {
       <div className="board-message board-message--lobby">
         <h1>{room.name}</h1>
         <p>{room.players.length} / {room.settings.playerCount} 已就座</p>
-        <BoardQr value={`${window.location.origin}/?room=${room.code}`} />
-        <span>扫码加入 · 房间号 {formatRoomCode(room.code)}</span>
+        {room.settings.mode === "experience" ? (
+          <div className="board-experience-ready">
+            <strong>完整流程体验</strong>
+            <span>三名模拟玩家已就位 · 等待两台手机准备</span>
+          </div>
+        ) : (
+          <BoardQr value={`${window.location.origin}/?room=${room.code}`} />
+        )}
+        <span>{room.settings.mode === "experience" ? "第二台手机扫描房主页面二维码加入" : "扫码加入"} · 房间号 {formatRoomCode(room.code)}</span>
       </div>
     );
   }

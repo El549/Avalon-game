@@ -29,6 +29,19 @@ export class RoomStore {
     return { room, credentials: room.initialHostCredentials() };
   }
 
+  createExperienceRoom(hostNickname: string): { room: GameRoom; credentials: SessionCredentials } {
+    return this.createRoom(hostNickname, {
+      playerCount: 5,
+      rolePreset: "classic",
+      rejectionRule: "evil-wins",
+      mode: "experience",
+    });
+  }
+
+  findRoom(code: string): GameRoom | null {
+    return this.rooms.get(code) ?? null;
+  }
+
   getRoom(code: string): GameRoom {
     const room = this.rooms.get(code);
     if (!room) throw new RoomError("房间不存在或已经过期", "ROOM_NOT_FOUND", 404);
@@ -38,6 +51,12 @@ export class RoomStore {
   joinRoom(code: string, nickname: string, seat: number): SessionCredentials {
     const room = this.getRoom(code);
     return room.addPlayer(nickname, seat);
+  }
+
+  dissolveRoom(code: string, playerId: string): void {
+    const room = this.getRoom(code);
+    room.assertCanDissolve(playerId);
+    this.rooms.delete(code);
   }
 
   cleanup(): void {

@@ -12,6 +12,7 @@ export type Role =
 
 export type RolePreset = "classic" | "advanced";
 export type RejectionRule = "evil-wins" | "fifth-auto";
+export type RoomMode = "standard" | "experience";
 export type GamePhase =
   | "lobby"
   | "identity"
@@ -28,6 +29,7 @@ export interface RoomSettings {
   playerCount: number;
   rolePreset: RolePreset;
   rejectionRule: RejectionRule;
+  mode: RoomMode;
 }
 
 export interface PublicPlayer {
@@ -35,6 +37,7 @@ export interface PublicPlayer {
   nickname: string;
   seat: number;
   isHost: boolean;
+  isSimulated: boolean;
   ready: boolean;
   connected: boolean;
   identityConfirmed: boolean;
@@ -116,6 +119,8 @@ export type CommandAck<T = void> = (result: ApiResult<T>) => void;
 export interface ClientToServerEvents {
   "player:ready": (ready: boolean, ack: CommandAck) => void;
   "player:seat": (seat: number, ack: CommandAck) => void;
+  "player:leave": (ack: CommandAck) => void;
+  "room:dissolve": (ack: CommandAck) => void;
   "game:start": (ack: CommandAck) => void;
   "identity:confirm": (ack: CommandAck) => void;
   "team:propose": (playerIds: string[], ack: CommandAck) => void;
@@ -131,6 +136,7 @@ export interface ServerToClientEvents {
   "room:public": (state: PublicRoomState) => void;
   "player:private": (state: PrivatePlayerState) => void;
   "room:error": (message: string) => void;
+  "room:closed": (notice: { reason: "dissolved"; message: string }) => void;
 }
 
 export type InterServerEvents = Record<never, never>;

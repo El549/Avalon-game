@@ -1,14 +1,22 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { PublicRoomState, RejectionRule, RolePreset } from "@shared/contracts";
-import { createRoom, getPublicRoom, joinRoom } from "./api";
+import { createExperienceRoom, createRoom, getPublicRoom, joinRoom } from "./api";
 import { Brand } from "./components/Brand";
 import { RoundTable } from "./components/RoundTable";
 import { loadCredentials, saveCredentials } from "./session";
 
-type Mode = "create" | "join";
+type Mode = "create" | "join" | "experience";
 
 export function Home() {
-  const initialCode = useMemo(() => new URLSearchParams(window.location.search).get("room")?.replace(/\D/g, "").slice(0, 6) ?? "", []);
+  const searchParams = useMemo(() => new URLSearchParams(window.location.search), []);
+  const initialCode = useMemo(() => searchParams.get("room")?.replace(/\D/g, "").slice(0, 6) ?? "", [searchParams]);
+  const notice = useMemo(() => {
+    const value = searchParams.get("notice");
+    if (value === "left") return "你已离开桌局，原座位已经释放。";
+    if (value === "dissolved") return "原桌局已解散，可以重新创建。";
+    if (value === "unavailable") return "原桌局已经结束或失效，可以重新创建或加入其他桌局。";
+    return null;
+  }, [searchParams]);
   const [mode, setMode] = useState<Mode>(initialCode ? "join" : "create");
   const [nickname, setNickname] = useState("");
   const [playerCount, setPlayerCount] = useState(7);
@@ -88,6 +96,21 @@ export function Home() {
     }
   };
 
+  const submitExperience = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await createExperienceRoom(nickname);
+      saveCredentials(result.credentials);
+      window.location.assign(`/room/${result.credentials.roomCode}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "体验房间创建失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <main className="home-shell">
       <Brand />
@@ -102,7 +125,12 @@ export function Home() {
         <button type="button" className={mode === "join" ? "is-active" : ""} onClick={() => { setMode("join"); setError(null); }}>
           加入桌局
         </button>
+        <button type="button" className={mode === "experience" ? "is-active" : ""} onClick={() => { setMode("experience"); setError(null); }}>
+          流程体验
+        </button>
       </nav>
+
+      {notice && <p className="entry-notice" role="status">{notice}</p>}
 
       {mode === "create" ? (
         <form className="entry-form" onSubmit={submitCreate}>
@@ -143,7 +171,7 @@ export function Home() {
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="primary-button" disabled={busy || nickname.trim().length === 0}>{busy ? "正在创建…" : "创建桌局"}</button>
         </form>
-      ) : (
+      ) : mode === "join" ? (
         <form className="entry-form" onSubmit={submitJoin}>
           <Field label="房间号">
             <div className="room-code-input">
@@ -197,6 +225,26 @@ export function Home() {
           {error && <p className="form-error" role="alert">{error}</p>}
           <button className="primary-button" disabled={busy || !room || !seat || nickname.trim().length === 0}>
             {busy ? "正在加入…" : room ? "确认座位并加入" : "先查看房间"}
+          </button>
+        </form>
+      ) : (
+        <form className="entry-form" onSubmit={submitExperience}>
+          <div className="experience-intro">
+            <span>两台手机即可体验</span>
+            <h2>从认身份一路走到刺杀</h2>
+            <p>第一台手机创建体验房间，第二台手机扫码坐到 2 号位；其余三名模拟玩家会自动完成操作。</p>
+            <ol>
+              <li>两台手机都能真实查看身份、组队和提交任务票</li>
+              <li>公开表决仍在现场完成，由房主记录结果</li>
+              <li>想体验刺杀，请让前三次任务成功</li>
+            </ol>
+          </div>
+          <Field label="第一位体验者昵称">
+            <input aria-label="第一位体验者昵称" value={nickname} onChange={(event) => setNickname(event.target.value)} maxLength={12} placeholder="例如：林深" required />
+          </Field>
+          {error && <p className="form-error" role="alert">{error}</p>}
+          <button className="primary-button" disabled={busy || nickname.trim().length === 0}>
+            {busy ? "正在准备体验…" : "创建完整流程体验"}
           </button>
         </form>
       )}

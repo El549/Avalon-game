@@ -43,6 +43,7 @@ export function RoundTable({
             {isLeader && <CrownIcon className="seat__crown" />}
             <span className="seat__number">{seat}</span>
             <span className="seat__name">{player?.nickname ?? "空位"}</span>
+            {player?.isSimulated && <span className="seat__simulated">模拟</span>}
             {player && !player.connected && <span className="seat__offline">离线</span>}
           </>
         );

@@ -9,7 +9,7 @@ function createReadyRoom(playerCount = 7, rejectionRule: "evil-wins" | "fifth-au
   const room = new GameRoom(
     "123456",
     "测试圆桌",
-    { playerCount, rolePreset: "advanced", rejectionRule },
+    { playerCount, rolePreset: "advanced", rejectionRule, mode: "standard" },
     "玩家1",
     { random: () => randomValues[randomIndex++ % randomValues.length], now: () => now },
   );
@@ -67,7 +67,7 @@ function runMissionWithFailures(room: GameRoom, hostId: string, advance: () => v
 
 describe("房间主流程", () => {
   it("开局前可以换到空座位，换座后需要重新准备", () => {
-    const room = new GameRoom("123456", "测试圆桌", { playerCount: 5, rolePreset: "classic", rejectionRule: "evil-wins" }, "房主");
+    const room = new GameRoom("123456", "测试圆桌", { playerCount: 5, rolePreset: "classic", rejectionRule: "evil-wins", mode: "standard" }, "房主");
     const host = room.initialHostCredentials();
     const guest = room.addPlayer("阿乔", 2);
     room.setReady(guest.playerId, true);
@@ -75,6 +75,25 @@ describe("房间主流程", () => {
     expect(room.publicState().players.find((player) => player.id === guest.playerId)).toMatchObject({ seat: 4, ready: false });
     expect(() => room.changeSeat(host.playerId, 4)).toThrow("这个座位已经有人");
     expect(() => room.changeSeat(host.playerId, 8)).toThrow("座位号无效");
+  });
+
+  it("开局前普通玩家可以离开并释放座位，房主只能解散", () => {
+    const room = new GameRoom("123456", "测试圆桌", { playerCount: 5, rolePreset: "classic", rejectionRule: "evil-wins", mode: "standard" }, "房主");
+    const host = room.initialHostCredentials();
+    const guest = room.addPlayer("阿乔", 2);
+    room.leave(guest.playerId);
+    expect(room.publicState().players.map((player) => player.nickname)).toEqual(["房主"]);
+    expect(() => room.authenticate(guest.token)).toThrow("身份凭证无效");
+    expect(() => room.leave(host.playerId)).toThrow("房主需要解散桌局");
+    expect(() => room.assertCanDissolve(guest.playerId)).toThrow("找不到这名玩家");
+    expect(() => room.assertCanDissolve(room.addPlayer("新玩家", 2).playerId)).toThrow("只有房主");
+    expect(() => room.assertCanDissolve(host.playerId)).not.toThrow();
+  });
+
+  it("游戏开始后不能直接离开或解散", () => {
+    const { room, credentials } = createReadyRoom();
+    expect(() => room.leave(credentials[1].playerId)).toThrow("游戏开始后不能直接离开");
+    expect(() => room.assertCanDissolve(credentials[0].playerId)).toThrow("游戏开始后不能直接解散");
   });
 
   it("开局前不向公共状态泄露身份", () => {
@@ -242,5 +261,64 @@ describe("房间主流程", () => {
     expect(room.publicState().phase).toBe("complete");
     room.setConnected(credentials[2].playerId, false);
     expect(() => room.rematch(hostId)).toThrow("需要所有玩家在线");
+  });
+
+  it("两台手机和模拟玩家可以走完整流程体验", () => {
+    let now = 1_000;
+    const room = new GameRoom(
+      "123456",
+      "体验圆桌",
+      { playerCount: 5, rolePreset: "classic", rejectionRule: "evil-wins", mode: "experience" },
+      "第一台手机",
+      { random: () => 0.2, now: () => now },
+    );
+    const host = room.initialHostCredentials();
+    expect(room.publicState().players).toMatchObject([
+      { seat: 1, nickname: "第一台手机", isSimulated: false, ready: false },
+      { seat: 3, isSimulated: true, ready: true, connected: true },
+      { seat: 4, isSimulated: true, ready: true, connected: true },
+      { seat: 5, isSimulated: true, ready: true, connected: true },
+    ]);
+    expect(() => room.addPlayer("错误座位", 4)).toThrow();
+    const second = room.addPlayer("第二台手机", 2);
+    for (const credentials of [host, second]) {
+      room.setConnected(credentials.playerId, true);
+      room.setReady(credentials.playerId, true);
+    }
+    room.startGame(host.playerId);
+    expect(room.privateState(host.playerId).role).toBe("merlin");
+    expect(room.privateState(second.playerId).role).toBe("assassin");
+    room.confirmIdentity(host.playerId);
+    expect(room.publicState().phase).toBe("identity");
+    expect(room.publicState().players.filter((player) => player.isSimulated).every((player) => player.identityConfirmed)).toBe(true);
+    room.confirmIdentity(second.playerId);
+
+    const humanIds = [host.playerId, second.playerId];
+    for (let mission = 0; mission < 3; mission += 1) {
+      const state = room.publicState();
+      if (state.phase === "team-building") {
+        const requiredSize = state.missions[state.missionIndex].teamSize;
+        const simulatedIds = state.players.filter((player) => player.isSimulated).map((player) => player.id);
+        const team = [...humanIds, ...simulatedIds].slice(0, requiredSize);
+        const invalidTeam = [host.playerId, ...simulatedIds].slice(0, requiredSize);
+        expect(() => room.proposeTeam(leaderId(room), invalidTeam)).toThrow("两位真人");
+        room.proposeTeam(leaderId(room), team);
+      }
+      const voting = room.publicState();
+      expect(voting.phase).toBe("team-voting");
+      expect(voting.proposedTeam).toEqual(expect.arrayContaining(humanIds));
+      room.startPublicVote(host.playerId);
+      now += 4_000;
+      room.recordPublicVote(host.playerId, 0);
+      room.submitQuestVote(host.playerId, "success");
+      expect(room.publicState().phase).toBe("quest-voting");
+      room.submitQuestVote(second.playerId, "success");
+      expect(room.publicState().phase).toBe("quest-result");
+      room.continueAfterQuest(host.playerId);
+    }
+
+    expect(room.publicState().phase).toBe("assassination");
+    room.selectAssassinationTarget(second.playerId, host.playerId);
+    expect(room.publicState()).toMatchObject({ phase: "complete", winner: "evil" });
   });
 });

@@ -43,6 +43,13 @@ interface RoomDependencies {
   now?: () => number;
 }
 
+const EXPERIENCE_ROLES_BY_SEAT: Role[] = ["merlin", "assassin", "percival", "loyal-servant", "morgana"];
+const EXPERIENCE_PLAYERS = [
+  { nickname: "模拟骑士A", seat: 3 },
+  { nickname: "模拟骑士B", seat: 4 },
+  { nickname: "模拟骑士C", seat: 5 },
+];
+
 function createToken(): string {
   return randomBytes(24).toString("base64url");
 }
@@ -90,6 +97,14 @@ export class GameRoom {
       teamPlayerIds: [],
     }));
     this.hostCredentials = this.addPlayer(hostNickname, 1, true);
+    if (this.settings.mode === "experience") {
+      for (const simulated of EXPERIENCE_PLAYERS) {
+        const credentials = this.addPlayer(simulated.nickname, simulated.seat, false, true);
+        const player = this.requirePlayer(credentials.playerId);
+        player.ready = true;
+        player.connected = true;
+      }
+    }
   }
 
   get lastUpdatedAt(): number {
@@ -98,6 +113,10 @@ export class GameRoom {
 
   get playerCount(): number {
     return this.players.length;
+  }
+
+  hasPlayer(playerId: string): boolean {
+    return this.players.some((player) => player.id === playerId);
   }
 
   private touch(): void {
@@ -135,8 +154,10 @@ export class GameRoom {
   }
 
   private assignRoles(): void {
-    const roles = shuffle(createRoleDeck(this.settings.playerCount, this.settings.rolePreset), this.random);
     const seatedPlayers = [...this.players].sort((a, b) => a.seat - b.seat);
+    const roles = this.settings.mode === "experience"
+      ? EXPERIENCE_ROLES_BY_SEAT
+      : shuffle(createRoleDeck(this.settings.playerCount, this.settings.rolePreset), this.random);
     seatedPlayers.forEach((player, index) => {
       player.role = roles[index];
       player.identityConfirmed = false;
@@ -149,11 +170,14 @@ export class GameRoom {
     this.voteCountdownEndsAt = null;
   }
 
-  addPlayer(nickname: string, seat: number, isHost = false): SessionCredentials {
+  addPlayer(nickname: string, seat: number, isHost = false, isSimulated = false): SessionCredentials {
     if (this.phase !== "lobby") throw new RoomError("游戏已经开始，不能加入", "GAME_STARTED", 409);
     if (this.players.length >= this.settings.playerCount) throw new RoomError("房间已经坐满", "ROOM_FULL", 409);
     if (!Number.isInteger(seat) || seat < 1 || seat > this.settings.playerCount) {
       throw new RoomError("座位号无效", "INVALID_SEAT");
+    }
+    if (this.settings.mode === "experience" && !isSimulated && !isHost && seat !== 2) {
+      throw new RoomError("流程体验请使用 2 号座位", "EXPERIENCE_SEAT_ONLY", 409);
     }
     if (this.players.some((player) => player.seat === seat)) throw new RoomError("这个座位已经有人", "SEAT_TAKEN", 409);
     if (this.players.some((player) => player.nickname.toLocaleLowerCase() === nickname.toLocaleLowerCase())) {
@@ -165,6 +189,7 @@ export class GameRoom {
       nickname,
       seat,
       isHost,
+      isSimulated,
       ready: false,
       connected: false,
       identityConfirmed: false,
@@ -201,6 +226,7 @@ export class GameRoom {
 
   changeSeat(playerId: string, seat: number): void {
     if (this.phase !== "lobby") throw new RoomError("游戏开始后不能更换座位", "INVALID_PHASE");
+    if (this.settings.mode === "experience") throw new RoomError("流程体验的座位已经固定", "EXPERIENCE_SEATS_LOCKED");
     if (!Number.isInteger(seat) || seat < 1 || seat > this.settings.playerCount) {
       throw new RoomError("座位号无效", "INVALID_SEAT");
     }
@@ -212,6 +238,20 @@ export class GameRoom {
     this.touch();
   }
 
+  leave(playerId: string): void {
+    if (this.phase !== "lobby") throw new RoomError("游戏开始后不能直接离开，请与全桌确认", "INVALID_PHASE");
+    const player = this.requirePlayer(playerId);
+    if (player.isHost) throw new RoomError("房主需要解散桌局", "HOST_MUST_DISSOLVE", 403);
+    if (player.isSimulated) throw new RoomError("模拟玩家不能离开", "SIMULATED_PLAYER", 403);
+    this.players = this.players.filter((candidate) => candidate.id !== playerId);
+    this.touch();
+  }
+
+  assertCanDissolve(playerId: string): void {
+    if (this.phase !== "lobby") throw new RoomError("游戏开始后不能直接解散，请与全桌确认", "INVALID_PHASE");
+    this.requireHost(playerId);
+  }
+
   startGame(playerId: string): void {
     this.requireHost(playerId);
     if (this.phase !== "lobby") throw new RoomError("游戏已经开始", "INVALID_PHASE");
@@ -220,7 +260,9 @@ export class GameRoom {
       throw new RoomError("需要所有玩家在线并准备", "PLAYERS_NOT_READY");
     }
     this.assignRoles();
-    this.leaderSeat = Math.floor(this.random() * this.settings.playerCount) + 1;
+    this.leaderSeat = this.settings.mode === "experience"
+      ? 1
+      : Math.floor(this.random() * this.settings.playerCount) + 1;
     this.phase = "identity";
     this.missionIndex = 0;
     this.rejectionCount = 0;
@@ -235,6 +277,11 @@ export class GameRoom {
     const player = this.requirePlayer(playerId);
     if (player.identityConfirmed) return;
     player.identityConfirmed = true;
+    if (this.settings.mode === "experience") {
+      this.players.filter((candidate) => candidate.isSimulated).forEach((candidate) => {
+        candidate.identityConfirmed = true;
+      });
+    }
     if (this.players.every((candidate) => candidate.identityConfirmed)) this.phase = "team-building";
     this.touch();
   }
@@ -247,11 +294,18 @@ export class GameRoom {
     const uniqueIds = [...new Set(playerIds)];
     if (uniqueIds.length !== requiredSize) throw new RoomError(`本轮必须选择 ${requiredSize} 人`, "WRONG_TEAM_SIZE");
     uniqueIds.forEach((id) => this.requirePlayer(id));
+    if (this.settings.mode === "experience") {
+      const humanPlayerIds = this.players.filter((candidate) => !candidate.isSimulated).map((candidate) => candidate.id);
+      if (!humanPlayerIds.every((id) => uniqueIds.includes(id))) {
+        throw new RoomError("流程体验需要把两位真人都加入任务队伍", "EXPERIENCE_HUMANS_REQUIRED");
+      }
+    }
     this.proposedTeam = uniqueIds;
     this.voteCountdownEndsAt = null;
     if (this.settings.rejectionRule === "fifth-auto" && this.rejectionCount === 4) {
       this.rejectionCount = 0;
       this.phase = "quest-voting";
+      this.submitExperienceVotes();
     } else {
       this.phase = "team-voting";
     }
@@ -278,6 +332,7 @@ export class GameRoom {
       this.rejectionCount = 0;
       this.questVotes = {};
       this.phase = "quest-voting";
+      this.submitExperienceVotes();
     } else {
       this.rejectionCount += 1;
       if (this.settings.rejectionRule === "evil-wins" && this.rejectionCount >= 5) {
@@ -286,6 +341,7 @@ export class GameRoom {
         this.leaderSeat = this.nextLeaderSeat();
         this.proposedTeam = [];
         this.phase = "team-building";
+        this.proposeExperienceTeamIfNeeded();
       }
     }
     this.touch();
@@ -304,6 +360,24 @@ export class GameRoom {
     this.questVotes[playerId] = vote;
     if (Object.keys(this.questVotes).length === this.proposedTeam.length) this.resolveQuest();
     this.touch();
+  }
+
+  private submitExperienceVotes(): void {
+    if (this.settings.mode !== "experience" || this.phase !== "quest-voting") return;
+    for (const player of this.players) {
+      if (player.isSimulated && this.proposedTeam.includes(player.id)) this.questVotes[player.id] = "success";
+    }
+  }
+
+  private proposeExperienceTeamIfNeeded(): void {
+    if (this.settings.mode !== "experience" || this.phase !== "team-building") return;
+    const leader = this.players.find((candidate) => candidate.seat === this.leaderSeat);
+    if (!leader?.isSimulated) return;
+    const requiredSize = this.missions[this.missionIndex].teamSize;
+    const humanPlayers = this.players.filter((candidate) => !candidate.isSimulated);
+    const simulatedPlayers = this.players.filter((candidate) => candidate.isSimulated);
+    const team = [...humanPlayers, ...simulatedPlayers].slice(0, requiredSize).map((candidate) => candidate.id);
+    this.proposeTeam(leader.id, team);
   }
 
   private resolveQuest(): void {
@@ -332,6 +406,7 @@ export class GameRoom {
       this.missionIndex += 1;
       this.resetRoundState();
       this.phase = "team-building";
+      this.proposeExperienceTeamIfNeeded();
     }
     this.touch();
   }
@@ -363,7 +438,9 @@ export class GameRoom {
       teamPlayerIds: [],
     }));
     this.assignRoles();
-    this.leaderSeat = Math.floor(this.random() * this.settings.playerCount) + 1;
+    this.leaderSeat = this.settings.mode === "experience"
+      ? 1
+      : Math.floor(this.random() * this.settings.playerCount) + 1;
     this.missionIndex = 0;
     this.rejectionCount = 0;
     this.winner = null;
@@ -380,11 +457,12 @@ export class GameRoom {
       settings: this.settings,
       phase: this.phase,
       players: this.players
-        .map(({ id, nickname, seat, isHost, ready, connected, identityConfirmed }) => ({
+        .map(({ id, nickname, seat, isHost, isSimulated, ready, connected, identityConfirmed }) => ({
           id,
           nickname,
           seat,
           isHost,
+          isSimulated,
           ready,
           connected,
           identityConfirmed,

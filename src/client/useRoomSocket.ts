@@ -16,6 +16,7 @@ export interface RoomSocketState {
   privateState: PrivatePlayerState | null;
   connected: boolean;
   error: string | null;
+  closedNotice: "dissolved" | "unavailable" | null;
 }
 
 export function useRoomSocket(
@@ -29,6 +30,7 @@ export function useRoomSocket(
     privateState: null,
     connected: false,
     error: null,
+    closedNotice: null,
   });
 
   useEffect(() => {
@@ -42,8 +44,17 @@ export function useRoomSocket(
     socketRef.current = socket;
     socket.on("connect", () => setState((current) => ({ ...current, connected: true, error: null })));
     socket.on("disconnect", () => setState((current) => ({ ...current, connected: false })));
-    socket.on("connect_error", (error) => setState((current) => ({ ...current, connected: false, error: error.message })));
+    socket.on("connect_error", (error) => {
+      const code = (error as Error & { data?: { code?: string } }).data?.code;
+      setState((current) => ({
+        ...current,
+        connected: false,
+        error: error.message,
+        closedNotice: code === "ROOM_NOT_FOUND" ? "unavailable" : current.closedNotice,
+      }));
+    });
     socket.on("room:error", (error) => setState((current) => ({ ...current, error })));
+    socket.on("room:closed", () => setState((current) => ({ ...current, closedNotice: "dissolved" })));
     socket.on("room:public", (publicState) => setState((current) => ({ ...current, publicState })));
     socket.on("player:private", (privateState) => setState((current) => ({ ...current, privateState })));
     return () => {
