@@ -47,3 +47,12 @@ export function FingerprintIcon(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+export function EyeIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" {...props}>
+      <path d="M2.8 12s3.3-6 9.2-6 9.2 6 9.2 6-3.3 6-9.2 6-9.2-6-9.2-6Z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      <circle cx="12" cy="12" r="2.8" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  );
+}

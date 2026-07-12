@@ -149,6 +149,13 @@ export class GameRoom {
     return player.isHost || player.seat === this.leaderSeat;
   }
 
+  private canRecordPublicVote(playerId: string): boolean {
+    const player = this.requirePlayer(playerId);
+    const leader = this.players.find((candidate) => candidate.seat === this.leaderSeat);
+    if (!leader) return false;
+    return leader.isSimulated ? player.isHost : player.id === leader.id;
+  }
+
   private nextLeaderSeat(): number {
     if (this.leaderSeat === null) return 1;
     return (this.leaderSeat % this.settings.playerCount) + 1;
@@ -382,7 +389,7 @@ export class GameRoom {
 
   recordPublicVote(playerId: string, rejectCount: number): boolean {
     if (this.phase !== "team-voting") throw new RoomError("现在不是公开表决阶段", "INVALID_PHASE");
-    if (!this.canControlPublicFlow(playerId)) throw new RoomError("只有房主或当前队长可以记录结果", "CONTROL_ONLY", 403);
+    if (!this.canRecordPublicVote(playerId)) throw new RoomError("只有本轮队长可以记录结果，模拟队长由房主代为记录", "PUBLIC_VOTE_RECORDER_ONLY", 403);
     if (!Number.isInteger(rejectCount) || rejectCount < 0 || rejectCount > this.settings.playerCount) {
       throw new RoomError("反对人数无效", "INVALID_REJECT_COUNT");
     }
@@ -610,7 +617,7 @@ export class GameRoom {
       canConfirmIdentity: this.phase === "identity" && !player.identityConfirmed,
       canProposeTeam: this.phase === "team-building" && player.seat === this.leaderSeat,
       canRecordPublicVote:
-        this.phase === "team-voting" && this.canControlPublicFlow(playerId),
+        this.phase === "team-voting" && this.canRecordPublicVote(playerId),
       canSubmitQuest:
         this.phase === "quest-voting" && this.proposedTeam.includes(playerId) && !this.questVotes[playerId],
       questVoteSubmitted: Boolean(this.questVotes[playerId]),

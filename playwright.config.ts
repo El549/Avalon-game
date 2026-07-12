@@ -17,6 +17,7 @@ export default defineConfig({
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
     { name: "webkit-mobile", grep: /两台手机/, use: { ...devices["iPhone 13"] } },
+    { name: "webkit-board", grep: /五至十人公共屏/, use: { ...devices["Desktop Safari"] } },
   ],
   webServer: {
     command: "./node_modules/.bin/tsx src/server/index.ts",

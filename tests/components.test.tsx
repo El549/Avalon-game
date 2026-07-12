@@ -20,6 +20,22 @@ describe("身份与任务票界面", () => {
     expect(confirm).toHaveBeenCalledOnce();
   });
 
+  it("游戏中可以重新查看身份，关闭后不影响原流程", async () => {
+    const close = vi.fn();
+    render(<IdentityReveal role="percival" knownPlayers={[
+      { playerId: "3", nickname: "这是一位非常非常长的玩家昵称甲", seat: 3 },
+      { playerId: "4", nickname: "这是一位非常非常长的玩家昵称乙", seat: 4 },
+    ]} mode="review" onClose={close} />);
+    const hold = screen.getByRole("button", { name: "按住查看身份，松手隐藏" });
+    expect(screen.queryByText("派西维尔")).not.toBeInTheDocument();
+    fireEvent.pointerDown(hold, { pointerId: 1 });
+    expect(screen.getByText("派西维尔")).toBeInTheDocument();
+    fireEvent.pointerUp(hold, { pointerId: 1 });
+    expect(screen.queryByText("派西维尔")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "关闭身份查看" }));
+    expect(close).toHaveBeenCalledOnce();
+  });
+
   it("正义方看到两张票，但失败票明确不可选择", () => {
     render(<QuestBallot missionNumber={1} faction="good" orderKey="b" onSubmit={vi.fn()} />);
     expect(screen.getByText("任务成功")).toBeInTheDocument();

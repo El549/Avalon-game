@@ -1,25 +1,51 @@
-import { useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useState, type KeyboardEvent, type PointerEvent } from "react";
 import type { KnownPlayer, Role } from "@shared/contracts";
 import { ROLE_DETAILS } from "@shared/contracts";
 import { FingerprintIcon } from "../icons";
 
-interface IdentityRevealProps {
+interface IdentityRevealBaseProps {
   role: Role;
   knownPlayers: KnownPlayer[];
-  onConfirm: () => Promise<void>;
 }
 
-export function IdentityReveal({ role, knownPlayers, onConfirm }: IdentityRevealProps) {
+type IdentityRevealProps = IdentityRevealBaseProps & (
+  | { mode?: "confirm"; onConfirm: () => Promise<void>; onClose?: never }
+  | { mode: "review"; onClose: () => void; onConfirm?: never }
+);
+
+export function IdentityReveal(props: IdentityRevealProps) {
+  const { role, knownPlayers } = props;
+  const mode = props.mode ?? "confirm";
   const [revealed, setRevealed] = useState(false);
   const [hasViewed, setHasViewed] = useState(false);
   const [busy, setBusy] = useState(false);
   const details = ROLE_DETAILS[role];
+  const isReview = mode === "review";
 
   const reveal = () => {
     setRevealed(true);
     setHasViewed(true);
   };
   const hide = () => setRevealed(false);
+
+  useEffect(() => {
+    if (!revealed) return;
+    const hideOnRelease = () => setRevealed(false);
+    const hideWhenBackgrounded = () => {
+      if (document.visibilityState !== "visible") setRevealed(false);
+    };
+    window.addEventListener("pointerup", hideOnRelease);
+    window.addEventListener("pointercancel", hideOnRelease);
+    window.addEventListener("blur", hideOnRelease);
+    document.addEventListener("visibilitychange", hideWhenBackgrounded);
+    return () => {
+      window.removeEventListener("pointerup", hideOnRelease);
+      window.removeEventListener("pointercancel", hideOnRelease);
+      window.removeEventListener("blur", hideOnRelease);
+      document.removeEventListener("visibilitychange", hideWhenBackgrounded);
+    };
+  }, [revealed]);
+
   const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key === " " || event.key === "Enter") {
       event.preventDefault();
@@ -30,18 +56,20 @@ export function IdentityReveal({ role, knownPlayers, onConfirm }: IdentityReveal
     if (event.key === " " || event.key === "Enter") hide();
   };
   const onPointerDown = (event: PointerEvent<HTMLButtonElement>) => {
+    event.preventDefault();
     try {
       event.currentTarget.setPointerCapture?.(event.pointerId);
     } catch {
-      // Some embedded browsers do not allow pointer capture; hold-to-reveal still works without it.
+      // Global release listeners still hide the card in embedded browsers without pointer capture.
     }
     reveal();
   };
 
   const confirm = async () => {
+    if (props.mode === "review") return;
     setBusy(true);
     try {
-      await onConfirm();
+      await props.onConfirm();
     } catch {
       // The room-level error banner explains the failure and lets the player retry.
     } finally {
@@ -49,56 +77,87 @@ export function IdentityReveal({ role, knownPlayers, onConfirm }: IdentityReveal
     }
   };
 
-  return (
-    <main className={`identity-screen identity-screen--${details.faction}`}>
-      <div className="identity-screen__header">
-        <p>你的身份</p>
-        <h1 className={revealed ? "" : "identity-screen__blurred-title"}>{revealed ? details.name : "身份已隐藏"}</h1>
-      </div>
-      <div className={`identity-art ${revealed ? "identity-art--revealed" : ""}`} aria-hidden={!revealed}>
+  const content = (
+    <>
+      <header className="identity-screen__header">
+        <p>{isReview ? "身份复看" : "身份确认"}</p>
+        <h1>{revealed ? "请遮挡屏幕" : "你的身份只对你保密"}</h1>
+        <span>{revealed ? "松手后会立即重新隐藏" : "按住底部按钮时才会显示"}</span>
+      </header>
+
+      <div className={`identity-vault ${revealed ? "identity-vault--revealed" : ""}`}>
         <img src={details.asset} alt="" draggable={false} />
-        <div className="identity-art__arch" />
-      </div>
-      <section className={`identity-details ${revealed ? "identity-details--revealed" : ""}`} aria-live="polite">
         {revealed ? (
-          <>
-            <h2>{details.name}</h2>
+          <div className="identity-details" aria-live="polite">
             <p className="identity-details__faction">你属于{details.faction === "good" ? "正义方" : "邪恶方"}</p>
+            <h2>{details.name}</h2>
             <p>{details.summary}</p>
-            {knownPlayers.length > 0 && (
+            {knownPlayers.length > 0 ? (
               <div className="known-players">
-                <span>你知道</span>
+                <span>你能认出的玩家</span>
                 <div>
                   {knownPlayers.map((player) => (
                     <b key={player.playerId}>{player.seat}号 {player.nickname}</b>
                   ))}
                 </div>
               </div>
+            ) : (
+              <p className="identity-details__knowledge">你没有额外可确认的身份信息</p>
             )}
             <p className="identity-details__objective">{details.objective}</p>
-          </>
+          </div>
         ) : (
-          <p className="identity-details__hidden-copy">只有按住下方封印时，身份信息才会出现。</p>
+          <div className="identity-vault__hidden" aria-hidden="true">
+            <FingerprintIcon />
+            <strong>身份已隐藏</strong>
+            <span>确认周围没人看屏幕后再按住</span>
+          </div>
         )}
-      </section>
-      <button
-        type="button"
-        className={`hold-seal ${revealed ? "hold-seal--active" : ""}`}
-        onPointerDown={onPointerDown}
-        onPointerUp={hide}
-        onPointerCancel={hide}
-        onPointerLeave={hide}
-        onKeyDown={onKeyDown}
-        onKeyUp={onKeyUp}
-        onContextMenu={(event) => event.preventDefault()}
-        aria-label="按住查看身份，松手隐藏"
+      </div>
+
+      <div className="identity-action-dock">
+        <button
+          type="button"
+          className={`hold-seal ${revealed ? "hold-seal--active" : ""}`}
+          onPointerDown={onPointerDown}
+          onPointerUp={hide}
+          onPointerCancel={hide}
+          onKeyDown={onKeyDown}
+          onKeyUp={onKeyUp}
+          onBlur={hide}
+          onContextMenu={(event) => event.preventDefault()}
+          aria-label="按住查看身份，松手隐藏"
+        >
+          <FingerprintIcon />
+          <span>按住查看身份</span>
+          <small>松手立即隐藏</small>
+        </button>
+        {isReview ? (
+          <button type="button" className="identity-close-button" disabled={revealed} onClick={() => props.mode === "review" && props.onClose()}>关闭身份查看</button>
+        ) : (
+          <button type="button" className="identity-confirm-button" aria-label="我已记住" disabled={!hasViewed || busy || revealed} onClick={() => void confirm()}>
+            {busy ? "确认中…" : "我已记住身份"}
+          </button>
+        )}
+      </div>
+    </>
+  );
+
+  if (!isReview) {
+    return <main className={`identity-screen identity-screen--${details.faction}`}>{content}</main>;
+  }
+  return (
+    <div className="identity-review-overlay" onPointerDown={(event) => {
+      if (event.target === event.currentTarget && !revealed && props.mode === "review") props.onClose();
+    }}>
+      <section
+        className={`identity-screen identity-screen--${details.faction} identity-screen--review`}
+        role="dialog"
+        aria-modal="true"
+        aria-label="查看我的身份"
       >
-        <FingerprintIcon />
-        <span>按住查看，松手隐藏</span>
-      </button>
-      <button type="button" className="primary-button" disabled={!hasViewed || busy || revealed} onClick={confirm}>
-        {busy ? "确认中…" : "我已记住"}
-      </button>
-    </main>
+        {content}
+      </section>
+    </div>
   );
 }

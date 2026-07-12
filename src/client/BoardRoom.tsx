@@ -9,16 +9,29 @@ import { useRoomSocket } from "./useRoomSocket";
 export function BoardRoom({ roomCode }: { roomCode: string }) {
   const { publicState, connected, error, closedNotice } = useRoomSocket(roomCode, "board");
   useEffect(() => {
+    const themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    const previousThemeColor = themeColor?.content;
+    document.documentElement.classList.add("board-route");
+    document.body.classList.add("board-route");
+    if (themeColor) themeColor.content = "#ffffff";
+    return () => {
+      document.documentElement.classList.remove("board-route");
+      document.body.classList.remove("board-route");
+      if (themeColor && previousThemeColor) themeColor.content = previousThemeColor;
+    };
+  }, []);
+  useEffect(() => {
     if (closedNotice) window.location.assign(`/?notice=${closedNotice}`);
   }, [closedNotice]);
   if (!publicState) {
     return <main className="board-loading"><Brand /><p>{error ?? "正在连接桌局…"}</p></main>;
   }
   return (
-    <main className="public-board">
+    <main className={`public-board public-board--${publicState.phase}`}>
       <header className="public-board__topbar">
         <Brand compact />
-        <div><span>{publicState.name}</span><b>{formatRoomCode(publicState.code)}</b></div>
+        <div className="public-board__room-name"><span>房间</span><strong>{publicState.name}</strong></div>
+        <div className="public-board__room-code"><span>房间号</span><b>{formatRoomCode(publicState.code)}</b></div>
       </header>
       <ConnectionNotice connected={connected} error={error} />
       <section className="public-board__stage">
@@ -47,7 +60,7 @@ function BoardCenter({ room }: { room: PublicRoomState }) {
   if (room.phase === "lobby") {
     return (
       <div className="board-message board-message--lobby">
-        <h1>{room.name}</h1>
+        <h1>等待入座</h1>
         <p>{room.players.length} / {room.settings.playerCount} 已就座</p>
         {room.settings.mode === "experience" ? (
           <div className="board-experience-ready">
@@ -172,7 +185,7 @@ function BoardQr({ value }: { value: string }) {
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
-    void import("qrcode").then(({ default: QRCode }) => QRCode.toDataURL(value, { width: 300, margin: 1, color: { dark: "#07111e", light: "#f4e8cf" } })).then((url) => {
+    void import("qrcode").then(({ default: QRCode }) => QRCode.toDataURL(value, { width: 300, margin: 1, color: { dark: "#0f213b", light: "#ffffff" } })).then((url) => {
       if (!cancelled) setSrc(url);
     });
     return () => { cancelled = true; };

@@ -6,6 +6,7 @@ import { IdentityReveal } from "./components/IdentityReveal";
 import { MissionTrack } from "./components/MissionTrack";
 import { QuestBallot } from "./components/QuestBallot";
 import { RoundTable } from "./components/RoundTable";
+import { EyeIcon } from "./icons";
 import { clearCredentials, loadCredentials } from "./session";
 import { useRoomSocket } from "./useRoomSocket";
 
@@ -13,6 +14,12 @@ export function PlayerRoom({ roomCode }: { roomCode: string }) {
   const credentials = useMemo(() => loadCredentials(roomCode), [roomCode]);
   const { publicState, privateState, connected, error, closedNotice, command, clearError } = useRoomSocket(roomCode, "player", credentials);
   const [showHostControls, setShowHostControls] = useState(false);
+  const [showIdentityReview, setShowIdentityReview] = useState(false);
+  const canReviewIdentity = Boolean(
+    privateState?.role
+    && publicState?.phase !== "complete"
+    && !(publicState?.phase === "identity" && privateState.canConfirmIdentity),
+  );
 
   useEffect(() => {
     if (!closedNotice) return;
@@ -23,6 +30,12 @@ export function PlayerRoom({ roomCode }: { roomCode: string }) {
         : `/?notice=${closedNotice}`,
     );
   }, [closedNotice, roomCode]);
+
+  useEffect(() => {
+    if (canReviewIdentity) return;
+    const timer = window.setTimeout(() => setShowIdentityReview(false), 0);
+    return () => window.clearTimeout(timer);
+  }, [canReviewIdentity]);
 
   if (!credentials) return <SessionMissing roomCode={roomCode} />;
   if (closedNotice) {
@@ -57,14 +70,21 @@ export function PlayerRoom({ roomCode }: { roomCode: string }) {
   }
   return (
     <div className="player-shell">
-      <header className="player-topbar">
+      <header className={`player-topbar ${canReviewIdentity && me.isHost ? "player-topbar--crowded" : ""}`}>
         <Brand compact />
         <div className="player-topbar__room">
           <span>{publicState.name}</span>
           <b>{formatRoomCode(publicState.code)}</b>
           {publicState.settings.mode === "experience" && <small>流程体验</small>}
         </div>
-        {me.isHost && <button type="button" className="host-controls-trigger" onClick={() => setShowHostControls(true)}>房主管理</button>}
+        <div className="player-topbar__actions">
+          {canReviewIdentity && (
+            <button type="button" className="identity-review-trigger" aria-label="查看我的身份" onClick={() => setShowIdentityReview(true)}>
+              <EyeIcon /><span>身份</span>
+            </button>
+          )}
+          {me.isHost && <button type="button" className="host-controls-trigger" aria-label="房主管理" onClick={() => setShowHostControls(true)}>管理</button>}
+        </div>
       </header>
       <ConnectionNotice connected={connected} error={error} />
       {error && <button type="button" className="dismiss-error" aria-label="关闭错误提示" onClick={clearError}>×</button>}
@@ -76,6 +96,14 @@ export function PlayerRoom({ roomCode }: { roomCode: string }) {
       />
       {me.isHost && showHostControls && (
         <HostControls room={publicState} command={command} onClose={() => setShowHostControls(false)} />
+      )}
+      {showIdentityReview && canReviewIdentity && privateState.role && (
+        <IdentityReveal
+          role={privateState.role}
+          knownPlayers={privateState.knownPlayers}
+          mode="review"
+          onClose={() => setShowIdentityReview(false)}
+        />
       )}
     </div>
   );
@@ -275,7 +303,7 @@ function TeamBuilding({
       </header>
       <p className="team-draft-summary" aria-live="polite">
         已选择 {visibleSelection.length} / {mission.teamSize}
-        {selectedPlayers.length > 0 && ` · ${selectedPlayers.map((player) => `${player.seat}号 ${player.nickname}`).join("、")}`}
+        {selectedPlayers.length > 0 && ` · ${selectedPlayers.map((player) => `${player.seat}号`).join("、")}`}
       </p>
       <RoundTable
         players={room.players}
@@ -306,18 +334,23 @@ function PublicVote({
 }) {
   const [rejectCount, setRejectCount] = useState(0);
   const team = room.players.filter((player) => room.proposedTeam.includes(player.id));
+  const leader = room.players.find((player) => player.seat === room.leaderSeat);
+  const recorderCopy = leader?.isSimulated
+    ? "本轮是模拟队长，由房主代为记录现场结果。"
+    : `只由本轮队长${leader ? `（${leader.seat}号 ${leader.nickname}）` : ""}记录现场结果。`;
   return (
     <main className="phase-screen public-vote-screen">
       <PhaseSummary room={room} />
       <header className="phase-heading">
         <p>本轮队伍</p>
-        <h1>{team.map((player) => `${player.seat}号 ${player.nickname}`).join(" · ")}</h1>
+        <h1>{team.map((player) => `${player.seat}号`).join(" · ")}</h1>
+        <div className="public-vote-team">{team.map((player) => player.nickname).join(" · ")}</div>
         <span>请所有人直接在现场举手表决，手机不参与个人投票。</span>
       </header>
       <div className="show-of-hands-seal" aria-hidden="true"><span>举手</span><small>现场完成</small></div>
       {privateState.canRecordPublicVote && (
         <div className="vote-recorder">
-          <p>现场共有多少人反对？</p>
+          <p>{leader?.isSimulated ? "请代模拟队长记录反对人数" : "你是本轮队长，请记录反对人数"}</p>
           <div>
             <button type="button" onClick={() => setRejectCount((value) => Math.max(0, value - 1))} aria-label="减少反对人数">−</button>
             <strong>{rejectCount}</strong>
@@ -326,7 +359,7 @@ function PublicVote({
           <button type="button" className="primary-button" onClick={() => runCommand(command("team-vote:record", rejectCount))}>确认现场结果</button>
         </div>
       )}
-      {!privateState.canRecordPublicVote && <p className="put-phone-down">由房主或当前队长记录反对人数。</p>}
+      {!privateState.canRecordPublicVote && <p className="put-phone-down">{recorderCopy}</p>}
     </main>
   );
 }

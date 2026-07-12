@@ -82,11 +82,15 @@ test("七人桌局从创建、认身份到刺杀和重开完整可用", async ({
       await player.page.mouse.down();
       const roleHeading = player.page.locator(".identity-details h2");
       await expect(roleHeading, `${player.seat} 号玩家按住身份后应看到角色`).toBeVisible();
+      const holdBoxWhileRevealed = await hold.boundingBox();
+      expect(holdBoxWhileRevealed, `${player.seat} 号玩家按住身份时按钮不应移动`).not.toBeNull();
+      expect(Math.abs(holdBoxWhileRevealed!.y - holdBox.y)).toBeLessThanOrEqual(1);
+      expect(Math.abs(holdBoxWhileRevealed!.height - holdBox.height)).toBeLessThanOrEqual(1);
       const role = (await roleHeading.textContent())?.trim();
       if (!role) throw new Error(`${player.seat} 号玩家未看到身份`);
       roleBySeat.set(player.seat, role);
       if (process.env.CAPTURE_VISUAL_QA && player.seat === 2) {
-        await player.page.locator(".identity-art img").evaluate(async (image) => {
+        await player.page.locator(".identity-vault > img").evaluate(async (image) => {
           await (image as HTMLImageElement).decode();
         });
         await player.page.waitForTimeout(300);
@@ -122,10 +126,13 @@ test("七人桌局从创建、认身份到刺杀和重开完整可用", async ({
       const seatButtons = leaderPage.locator(".round-table button.seat");
       await expect(seatButtons).toHaveCount(7);
       if (missionIndex === 0) {
-        const observerPage = players.find((player) => player.page !== leaderPage)!.page;
+        const observer = players.find((player) => player.page !== leaderPage)!;
+        const observerPage = observer.page;
         await seatButtons.nth(0).click();
         await expect(observerPage.locator(".round-table .seat--selected")).toHaveCount(1);
         await expect(board.locator(".round-table .seat--selected")).toHaveCount(1);
+        await reviewIdentity(observerPage, roleBySeat.get(observer.seat)!);
+        await expect(observerPage.locator(".round-table .seat--selected")).toHaveCount(1);
         await seatButtons.nth(0).click();
         await expect(observerPage.locator(".round-table .seat--selected")).toHaveCount(0);
         await seatButtons.evaluateAll((buttons, count) => {
@@ -142,10 +149,13 @@ test("七人桌局从创建、认身份到刺杀和重开完整可用", async ({
       await expect(board.getByRole("heading", { name: "请在现场表决这支队伍" })).toBeVisible();
       await expect(page.getByRole("button", { name: "开始同时亮票" })).toHaveCount(0);
       await expect(page.getByRole("timer")).toHaveCount(0);
-      const recordVote = page.getByRole("button", { name: "记录表决结果" });
-      const newRecordVote = page.getByRole("button", { name: "确认现场结果" });
+      const recordVote = leaderPage.getByRole("button", { name: "记录表决结果" });
+      const newRecordVote = leaderPage.getByRole("button", { name: "确认现场结果" });
       await expect(recordVote).toHaveCount(0);
       await expect(newRecordVote).toBeEnabled();
+      for (const player of players.filter((player) => player.page !== leaderPage)) {
+        await expect(player.page.getByRole("button", { name: "确认现场结果" })).toHaveCount(0);
+      }
       await newRecordVote.click();
 
       for (let index = 0; index < teamSize; index += 1) {
@@ -271,6 +281,10 @@ test("两台手机可以通过流程体验走到刺杀与结局", async ({ page,
     await second.getByRole("textbox", { name: "你的昵称" }).fill("第二台手机");
     await second.getByRole("button", { name: "确认座位并加入" }).click();
     await expect(second).toHaveURL(new RegExp(`/room/${roomCode}$`));
+    await second.evaluate(() => {
+      document.documentElement.style.setProperty("--safe-top", "47px");
+      document.documentElement.style.setProperty("--safe-bottom", "34px");
+    });
 
     const board = await boardContext.newPage();
     await board.goto(`/room/${roomCode}/board`);
@@ -301,6 +315,7 @@ test("两台手机可以通过流程体验走到刺杀与结局", async ({ page,
     await expectGameScreenFits(second, second.getByRole("button", { name: "按住查看身份，松手隐藏" }));
     await revealAndConfirmRole(second, "刺客");
     await expect(board.getByText(/正在组队/)).toBeVisible();
+    await reviewIdentity(second, "刺客");
 
     for (let mission = 0; mission < 3; mission += 1) {
       if (mission === 0) {
@@ -317,9 +332,12 @@ test("两台手机可以通过流程体验走到刺杀与结局", async ({ page,
       }
 
       await expect(board.getByRole("heading", { name: "请在现场表决这支队伍" })).toBeVisible();
-      const recordVote = page.getByRole("button", { name: "确认现场结果" });
+      const voteRecorder = mission === 1 ? second : page;
+      const otherPhone = voteRecorder === page ? second : page;
+      const recordVote = voteRecorder.getByRole("button", { name: "确认现场结果" });
       await expect(recordVote).toBeEnabled();
-      await expectGameScreenFits(page, recordVote);
+      await expect(otherPhone.getByRole("button", { name: "确认现场结果" })).toHaveCount(0);
+      await expectGameScreenFits(voteRecorder, recordVote);
       await recordVote.click();
 
       await expectGameScreenFits(page, page.getByRole("button", { name: "确认任务票" }));
@@ -489,6 +507,10 @@ test("五至十人公共屏在常见横屏尺寸下中央内容不会碰到座�
     { width: 1180, height: 820 },
     { width: 1024, height: 768 },
     { width: 900, height: 600 },
+    { width: 901, height: 600 },
+    { width: 1024, height: 600 },
+    { width: 1180, height: 600 },
+    { width: 1024, height: 500 },
   ];
   for (const playerCount of [5, 6, 7, 8, 9, 10]) {
     const created = await request.post("/api/rooms", {
@@ -504,6 +526,26 @@ test("五至十人公共屏在常见横屏尺寸下中央内容不会碰到座�
     for (const viewport of viewports) {
       await page.setViewportSize(viewport);
       await expect(page.locator(".board-message--lobby h1")).toBeVisible();
+      const viewportMetrics = await page.evaluate(() => {
+        const scrolling = document.scrollingElement!;
+        const board = document.querySelector<HTMLElement>(".public-board")!.getBoundingClientRect();
+        window.scrollTo(0, 9999);
+        return {
+          scrollHeight: scrolling.scrollHeight,
+          clientHeight: scrolling.clientHeight,
+          scrollWidth: scrolling.scrollWidth,
+          clientWidth: scrolling.clientWidth,
+          scrollY: window.scrollY,
+          board: { top: board.top, left: board.left, right: board.right, bottom: board.bottom },
+        };
+      });
+      expect(viewportMetrics.scrollHeight).toBeLessThanOrEqual(viewportMetrics.clientHeight + 1);
+      expect(viewportMetrics.scrollWidth).toBeLessThanOrEqual(viewportMetrics.clientWidth + 1);
+      expect(viewportMetrics.scrollY).toBe(0);
+      expect(viewportMetrics.board.top).toBeGreaterThanOrEqual(-1);
+      expect(viewportMetrics.board.left).toBeGreaterThanOrEqual(-1);
+      expect(viewportMetrics.board.right).toBeLessThanOrEqual(viewport.width + 1);
+      expect(viewportMetrics.board.bottom).toBeLessThanOrEqual(viewport.height + 1);
       const overlapSeats = await page.evaluate(() => {
         const contentElements = [...document.querySelectorAll(".board-message--lobby > h1, .board-message--lobby > p, .board-message--lobby > img, .board-message--lobby > span")];
         const seats = [...document.querySelectorAll(".public-board .seat")].map((seat, index) => ({ seat: index + 1, rect: seat.getBoundingClientRect() }));
@@ -547,8 +589,6 @@ async function expectGameScreenFits(page: Page, primaryAction: Locator): Promise
         return style.display !== "none" && style.visibility !== "hidden" && rect.width > 0 && rect.height > 0;
       });
     const lowestAction = actionElements.reduce((bottom, element) => Math.max(bottom, element.getBoundingClientRect().bottom), 0);
-    const overflowY = getComputedStyle(main).overflowY;
-    const canScroll = overflowY === "auto" || overflowY === "scroll";
     const clippedControls = actionElements.flatMap((element) => {
       const rect = element.getBoundingClientRect();
       const clipped = rect.top < -1 || rect.left < -1 || rect.bottom > window.innerHeight + 1 || rect.right > window.innerWidth + 1;
@@ -559,7 +599,7 @@ async function expectGameScreenFits(page: Page, primaryAction: Locator): Promise
       innerWidth: window.innerWidth,
       documentOverflow: Math.max(document.documentElement.scrollHeight, document.body.scrollHeight) - window.innerHeight,
       documentWidthOverflow: Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - window.innerWidth,
-      scrollableMainOverflow: canScroll ? main.scrollHeight - main.clientHeight : 0,
+      mainOverflow: main.scrollHeight - main.clientHeight,
       lowestAction,
       clippedControls,
     };
@@ -571,7 +611,7 @@ async function expectGameScreenFits(page: Page, primaryAction: Locator): Promise
   expect(primaryBox!.y + primaryBox!.height).toBeLessThanOrEqual(metrics!.innerHeight + 1);
   expect(metrics!.documentOverflow).toBeLessThanOrEqual(1);
   expect(metrics!.documentWidthOverflow).toBeLessThanOrEqual(1);
-  expect(metrics!.scrollableMainOverflow).toBeLessThanOrEqual(1);
+  expect(metrics!.mainOverflow).toBeLessThanOrEqual(1);
   expect(metrics!.lowestAction).toBeLessThanOrEqual(metrics!.innerHeight + 1);
   expect(metrics!.clippedControls).toEqual([]);
 }
@@ -579,11 +619,36 @@ async function expectGameScreenFits(page: Page, primaryAction: Locator): Promise
 async function revealAndConfirmRole(page: Page, expectedRole: string): Promise<void> {
   const hold = page.getByRole("button", { name: "按住查看身份，松手隐藏" });
   await expect(hold).toBeVisible();
+  const before = await hold.boundingBox();
+  expect(before).not.toBeNull();
   await hold.dispatchEvent("pointerdown", { pointerId: 1, pointerType: "touch", isPrimary: true });
   await expect(page.locator(".identity-details h2")).toHaveText(expectedRole);
+  const during = await hold.boundingBox();
+  expect(during).not.toBeNull();
+  expect(Math.abs(during!.y - before!.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(during!.height - before!.height)).toBeLessThanOrEqual(1);
   await expectGameScreenFits(page, page.getByRole("button", { name: "我已记住" }));
   await hold.dispatchEvent("pointerup", { pointerId: 1, pointerType: "touch", isPrimary: true });
   await page.getByRole("button", { name: "我已记住" }).click();
+}
+
+async function reviewIdentity(page: Page, expectedRole: string): Promise<void> {
+  await page.getByRole("button", { name: "查看我的身份" }).click();
+  const dialog = page.getByRole("dialog", { name: "查看我的身份" });
+  await expect(dialog).toBeVisible();
+  const hold = dialog.getByRole("button", { name: "按住查看身份，松手隐藏" });
+  const before = await hold.boundingBox();
+  expect(before).not.toBeNull();
+  await hold.dispatchEvent("pointerdown", { pointerId: 9, pointerType: "touch", isPrimary: true });
+  await expect(dialog.locator(".identity-details h2")).toHaveText(expectedRole);
+  if (process.env.CAPTURE_VISUAL_QA) await page.screenshot({ path: "/tmp/avalon-identity-review.png", fullPage: true });
+  const during = await hold.boundingBox();
+  expect(during).not.toBeNull();
+  expect(Math.abs(during!.y - before!.y)).toBeLessThanOrEqual(1);
+  await hold.dispatchEvent("pointerup", { pointerId: 9, pointerType: "touch", isPrimary: true });
+  await expect(dialog.locator(".identity-details h2")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "关闭身份查看" }).click();
+  await expect(dialog).toHaveCount(0);
 }
 
 async function submitSuccessfulQuest(page: Page): Promise<void> {
