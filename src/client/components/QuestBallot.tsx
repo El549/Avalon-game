@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Faction, MissionOutcome } from "@shared/contracts";
-import { BrokenCrownIcon, SwordIcon } from "../icons";
+import { ShieldLockIcon } from "../icons";
 
 export function QuestBallot({
   missionNumber,
@@ -15,13 +15,15 @@ export function QuestBallot({
 }) {
   const [selected, setSelected] = useState<MissionOutcome | null>(null);
   const [busy, setBusy] = useState(false);
-  const submit = async () => {
-    if (!selected) return;
+  const submit = async (value: MissionOutcome) => {
+    if (busy) return;
+    setSelected(value);
     setBusy(true);
     try {
-      await onSubmit(selected);
+      await onSubmit(value);
     } catch {
       // The room-level error banner explains the failure and keeps the ballot editable.
+      setSelected(null);
     } finally {
       setBusy(false);
     }
@@ -30,11 +32,11 @@ export function QuestBallot({
     ? ["failure", "success"]
     : ["success", "failure"];
   return (
-    <main className="ballot-screen">
+    <main className="ballot-screen editorial-paper-page">
       <header>
         <p>第 {missionNumber} 轮任务</p>
-        <span>你在任务队伍中</span>
-        <h1>秘密选择一张任务票</h1>
+        <h1>秘密任务票</h1>
+        <span>只有你能看到这个选择</span>
       </header>
       <div className="ballot-options" role="radiogroup" aria-label="任务票">
         {options.map((value) => (
@@ -45,14 +47,12 @@ export function QuestBallot({
             title={value === "success" ? "任务成功" : "任务失败"}
             copy={value === "success" ? "让任务顺利完成" : faction === "good" ? "你的身份不能选择此票" : "破坏本次任务"}
             disabled={value === "failure" && faction === "good"}
-            onSelect={setSelected}
+            busy={busy}
+            onSelect={(vote) => void submit(vote)}
           />
         ))}
       </div>
-      <p className="ballot-warning">选择确认后不能更改</p>
-      <button type="button" className="primary-button" disabled={!selected || busy} onClick={submit}>
-        {busy ? "封存中…" : "确认任务票"}
-      </button>
+      <p className="ballot-warning"><ShieldLockIcon />选择后立即封存</p>
     </main>
   );
 }
@@ -63,6 +63,7 @@ function BallotOption({
   title,
   copy,
   disabled,
+  busy,
   onSelect,
 }: {
   value: MissionOutcome;
@@ -70,6 +71,7 @@ function BallotOption({
   title: string;
   copy: string;
   disabled: boolean;
+  busy: boolean;
   onSelect: (value: MissionOutcome) => void;
 }) {
   return (
@@ -78,13 +80,12 @@ function BallotOption({
       className={`ballot-option ballot-option--${value} ${selected ? "ballot-option--selected" : ""}`}
       role="radio"
       aria-checked={selected}
-      disabled={disabled}
+      disabled={disabled || busy}
       onClick={() => onSelect(value)}
     >
-      <span className="ballot-option__icon">{value === "success" ? <SwordIcon /> : <BrokenCrownIcon />}</span>
       <span>
         <strong>{title}</strong>
-        <small>{copy}</small>
+        <small>{disabled ? "正义阵营不可选择" : copy}</small>
       </span>
       <i aria-hidden="true" />
     </button>

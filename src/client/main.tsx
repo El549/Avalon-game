@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import "./styles.css";
 import "./product-ui.css";
+import "./editorial-v5.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

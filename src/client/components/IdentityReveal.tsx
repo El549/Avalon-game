@@ -1,7 +1,7 @@
 import { useEffect, useState, type KeyboardEvent, type PointerEvent } from "react";
 import type { KnownPlayer, Role } from "@shared/contracts";
 import { ROLE_DETAILS } from "@shared/contracts";
-import { FingerprintIcon } from "../icons";
+import { EyeIcon } from "../icons";
 
 interface IdentityRevealBaseProps {
   role: Role;
@@ -80,37 +80,35 @@ export function IdentityReveal(props: IdentityRevealProps) {
   const content = (
     <>
       <header className="identity-screen__header">
-        <p>{isReview ? "身份复看" : "身份确认"}</p>
-        <h1>{revealed ? "请遮挡屏幕" : "你的身份只对你保密"}</h1>
-        <span>{revealed ? "松手后会立即重新隐藏" : "按住底部按钮时才会显示"}</span>
+        <h1>你的身份</h1>
       </header>
 
       <div className={`identity-vault ${revealed ? "identity-vault--revealed" : ""}`}>
-        <img src={details.asset} alt="" draggable={false} />
         {revealed ? (
           <div className="identity-details" aria-live="polite">
-            <p className="identity-details__faction">你属于{details.faction === "good" ? "正义方" : "邪恶方"}</p>
             <h2>{details.name}</h2>
+            <p className="identity-details__faction">{details.faction === "good" ? "正义阵营" : "邪恶阵营"}</p>
             <p>{details.summary}</p>
             {knownPlayers.length > 0 ? (
               <div className="known-players">
-                <span>你能认出的玩家</span>
+                <span className="editorial-divider"><b>你能看到</b></span>
                 <div>
                   {knownPlayers.map((player) => (
-                    <b key={player.playerId}>{player.seat}号 {player.nickname}</b>
+                    <b key={player.playerId}><i>{player.seat}号</i><span>{player.nickname}</span></b>
                   ))}
                 </div>
               </div>
             ) : (
-              <p className="identity-details__knowledge">你没有额外可确认的身份信息</p>
+              <div className="known-players known-players--empty">
+                <span className="editorial-divider"><b>你能看到</b></span>
+                <p className="identity-details__knowledge">没有额外可确认的身份信息</p>
+              </div>
             )}
-            <p className="identity-details__objective">{details.objective}</p>
           </div>
         ) : (
           <div className="identity-vault__hidden" aria-hidden="true">
-            <FingerprintIcon />
             <strong>身份已隐藏</strong>
-            <span>确认周围没人看屏幕后再按住</span>
+            <span>确认周围没有人看屏幕后，按住底部按钮查看。</span>
           </div>
         )}
       </div>
@@ -128,15 +126,14 @@ export function IdentityReveal(props: IdentityRevealProps) {
           onContextMenu={(event) => event.preventDefault()}
           aria-label="按住查看身份，松手隐藏"
         >
-          <FingerprintIcon />
+          <EyeIcon />
           <span>按住查看身份</span>
-          <small>松手立即隐藏</small>
         </button>
         {isReview ? (
-          <button type="button" className="identity-close-button" disabled={revealed} onClick={() => props.mode === "review" && props.onClose()}>关闭身份查看</button>
+          <button type="button" className="identity-close-button" disabled={revealed} onClick={() => props.mode === "review" && props.onClose()}>关闭</button>
         ) : (
           <button type="button" className="identity-confirm-button" aria-label="我已记住" disabled={!hasViewed || busy || revealed} onClick={() => void confirm()}>
-            {busy ? "确认中…" : "我已记住身份"}
+            {busy ? "确认中…" : "我已记住"}
           </button>
         )}
       </div>

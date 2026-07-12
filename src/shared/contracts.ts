@@ -72,6 +72,7 @@ export interface PublicRoomState {
   rejectionCount: number;
   draftTeam: string[];
   proposedTeam: string[];
+  questSubmittedCount: number;
   questRevealEndsAt: number | null;
   lastQuestResult: { outcome: MissionOutcome; failCount: number; ballots: MissionOutcome[] } | null;
   winner: Winner | null;

@@ -583,6 +583,7 @@ export class GameRoom {
       rejectionCount: this.rejectionCount,
       draftTeam: [...this.draftTeam],
       proposedTeam: [...this.proposedTeam],
+      questSubmittedCount: Object.keys(this.questVotes).length,
       questRevealEndsAt: this.questRevealEndsAt,
       lastQuestResult: this.lastQuestResult
         ? { ...this.lastQuestResult, ballots: [...this.lastQuestResult.ballots] }

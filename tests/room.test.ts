@@ -194,8 +194,11 @@ describe("房间主流程", () => {
     const { room } = createReadyRoom();
     const team = approveTeam(room);
     const goodPlayer = team.find((id) => room.privateState(id).faction === "good")!;
+    expect(room.publicState().questSubmittedCount).toBe(0);
     expect(() => room.submitQuestVote(goodPlayer, "failure")).toThrow("正义方只能提交任务成功");
     room.submitQuestVote(goodPlayer, "success");
+    expect(room.publicState().questSubmittedCount).toBe(1);
+    expect(JSON.stringify(room.publicState())).not.toContain("questVotes");
     expect(() => room.submitQuestVote(goodPlayer, "success")).toThrow("已经提交");
   });
 

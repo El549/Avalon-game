@@ -56,3 +56,41 @@ export function EyeIcon(props: SVGProps<SVGSVGElement>) {
     </svg>
   );
 }
+
+export function SwordCrownEmblem(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 120 150" fill="none" aria-hidden="true" {...props}>
+      <path d="M60 8 66 22 60 36 54 22 60 8Z" fill="currentColor" />
+      <path d="M60 34v70M54 45h12M56 104h8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="m31 97 15 9 14-20 14 20 15-9-8 31H39l-8-31Z" stroke="currentColor" strokeWidth="2.5" strokeLinejoin="round" />
+      <path d="M38 134h44M60 8v-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      {[0, 1, 2, 3, 4, 5, 6].map((index) => {
+        const angle = (-66 + index * 22) * Math.PI / 180;
+        const x1 = 60 + Math.cos(angle) * 45;
+        const y1 = 88 + Math.sin(angle) * 45;
+        const x2 = 60 + Math.cos(angle) * 55;
+        const y2 = 88 + Math.sin(angle) * 55;
+        return <path key={index} d={`M${x1} ${y1} ${x2} ${y2}`} stroke="currentColor" strokeWidth="1" opacity=".55" />;
+      })}
+    </svg>
+  );
+}
+
+export function ChaliceIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 64 64" fill="none" aria-hidden="true" {...props}>
+      <path d="M18 12h28c0 14-5 22-14 24-9-2-14-10-14-24Z" stroke="currentColor" strokeWidth="2" />
+      <path d="M32 36v11M23 53h18M26 47h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      <path d="M12 18H6c1 9 5 14 13 15M52 18h6c-1 9-5 14-13 15" stroke="currentColor" strokeWidth="1.5" opacity=".7" />
+    </svg>
+  );
+}
+
+export function ShieldLockIcon(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 32 32" fill="none" aria-hidden="true" {...props}>
+      <path d="M16 3 27 7v8c0 7-4.6 11.7-11 14-6.4-2.3-11-7-11-14V7l11-4Z" stroke="currentColor" strokeWidth="1.7" />
+      <path d="M12 15h8v7h-8v-7Zm2-1v-2a2 2 0 0 1 4 0v2" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
+  );
+}
