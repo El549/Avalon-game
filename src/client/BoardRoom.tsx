@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import type { PublicRoomState } from "@shared/contracts";
 import { ROLE_DETAILS } from "@shared/contracts";
+import { BoardMissionRail } from "./components/BoardMissionRail";
+import { BoardTable } from "./components/BoardTable";
 import { Brand, ConnectionNotice } from "./components/Brand";
-import { MissionTrack } from "./components/MissionTrack";
-import { RoundTable } from "./components/RoundTable";
 import { useRoomSocket } from "./useRoomSocket";
 
 export function BoardRoom({ roomCode }: { roomCode: string }) {
@@ -36,24 +36,21 @@ export function BoardRoom({ roomCode }: { roomCode: string }) {
       <ConnectionNotice connected={connected} error={error} />
       <section className="public-board__main" aria-label="桌局公开信息">
         <div className="public-board__table-stage">
-          <RoundTable
-            variant="board"
+          <BoardTable
             players={publicState.players}
             playerCount={publicState.settings.playerCount}
             selectedIds={publicState.phase === "team-building" ? publicState.draftTeam : publicState.proposedTeam}
             leaderSeat={publicState.leaderSeat}
             label="当前圆桌座位与任务队伍"
-          />
-          <div className="public-board__info" aria-label="当前游戏阶段" aria-live="polite">
-            <BoardCenter room={publicState} />
-          </div>
+          >
+            <div className="public-board__info" aria-label="当前游戏阶段">
+              <BoardCenter room={publicState} />
+            </div>
+          </BoardTable>
         </div>
       </section>
       {publicState.phase !== "lobby" && (
-        <div className="public-board__missions">
-          <MissionTrack missions={publicState.missions} currentIndex={publicState.missionIndex} />
-          <p>连续否决 <b>{publicState.rejectionCount}</b> / 5</p>
-        </div>
+        <BoardMissionRail missions={publicState.missions} currentIndex={publicState.missionIndex} rejectionCount={publicState.rejectionCount} />
       )}
     </main>
   );
@@ -66,7 +63,7 @@ function BoardCenter({ room }: { room: PublicRoomState }) {
     return (
       <div className="board-message board-message--lobby">
         <h1>等待入座</h1>
-        <p>{room.players.length} / {room.settings.playerCount} 已就座</p>
+        <p><b>{room.players.length}</b> / {room.settings.playerCount} 已就座</p>
         {room.settings.mode === "experience" ? (
           <div className="board-experience-ready">
             <strong>完整流程体验</strong>
@@ -91,16 +88,12 @@ function BoardCenter({ room }: { room: PublicRoomState }) {
   }
   if (room.phase === "team-building") {
     return (
-      <div className="board-message">
-        <p>第 {room.missionIndex + 1} 轮任务</p>
-        <strong>{room.draftTeam.length}/{mission.teamSize}</strong>
-        <h1>队长正在组队</h1>
-        <span>
-          {leader ? `当前队长 ${leader.seat}号 ${leader.nickname} · ` : ""}
-          {room.draftTeam.length > 0
-            ? `已选择 ${room.draftTeam.map((id) => room.players.find((player) => player.id === id)?.seat).join("、")} 号`
-            : "等待队长点选任务队员"}
-        </span>
+      <div className="board-message board-message--team-building">
+        <p>第 <b>{room.missionIndex + 1}</b> 轮任务</p>
+        <h1>队长正在选择 <b>{mission.teamSize}</b> 名队员</h1>
+        <div className="board-message__ornament" aria-hidden="true"><i /><span>✦</span><i /></div>
+        <strong className="board-team-count">已选择 <b>{room.draftTeam.length}</b> / {mission.teamSize}</strong>
+        {leader && <span>当前队长 · {leader.seat}号 {leader.nickname}</span>}
       </div>
     );
   }

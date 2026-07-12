@@ -29,9 +29,17 @@ export function RoundTable({
   disabled = false,
   label = "圆桌座位",
 }: RoundTableProps) {
+  const playerOrbits: Record<number, { radiusX: number; radiusY: number }> = {
+    5: { radiusX: 38, radiusY: 38 },
+    6: { radiusX: 42, radiusY: 39 },
+    7: { radiusX: 39, radiusY: 40 },
+    8: { radiusX: 41, radiusY: 40 },
+    9: { radiusX: 39.5, radiusY: 41 },
+    10: { radiusX: 41, radiusY: 41.5 },
+  };
   const orbit = variant === "board"
     ? { radiusX: 43, radiusY: 34 }
-    : { radiusX: 35, radiusY: 35 };
+    : playerOrbits[playerCount] ?? { radiusX: 38, radiusY: 38 };
 
   return (
     <div
@@ -44,6 +52,10 @@ export function RoundTable({
       <div className="round-table__wood" aria-hidden="true">
         <RoundTableCenter />
       </div>
+      <span className="round-table__diamond round-table__diamond--top" aria-hidden="true" />
+      <span className="round-table__diamond round-table__diamond--right" aria-hidden="true" />
+      <span className="round-table__diamond round-table__diamond--bottom" aria-hidden="true" />
+      <span className="round-table__diamond round-table__diamond--left" aria-hidden="true" />
       {Array.from({ length: playerCount }, (_, index) => index + 1).map((seat) => {
         const player = players.find((candidate) => candidate.seat === seat);
         const selected = player ? selectedIds.includes(player.id) : selectedSeats.includes(seat);
@@ -54,33 +66,43 @@ export function RoundTable({
           "--seat-left": `${(50 + Math.cos(angle) * orbit.radiusX).toFixed(3)}%`,
           "--seat-top": `${(50 + Math.sin(angle) * orbit.radiusY).toFixed(3)}%`,
         } as CSSProperties;
+        const nickname = player?.nickname ?? "空位";
+        const nameLength = Array.from(nickname).length;
         const content = (
           <>
-            {isLeader && <CrownIcon className="seat__crown" />}
-            <span className="seat__number">{seat}</span>
-            <span className="seat__name">{player?.nickname ?? "空位"}</span>
-            {player?.isSimulated && <span className="seat__simulated">模拟</span>}
-            {player && !player.connected && <span className="seat__offline">离线</span>}
+            <span className={`seat__number-badge ${isLeader ? "seat__number-badge--leader" : ""}`}>
+              <span className="seat__number">{seat}</span>
+            </span>
+            <span className={`seat__name ${nameLength > 8 ? "seat__name--long" : nameLength > 5 ? "seat__name--medium" : ""}`}>{nickname}</span>
+            {(player?.isSimulated || (player && !player.connected)) && (
+              <span className={`seat__status ${player && !player.connected ? "seat__status--offline" : ""}`}>
+                {player && !player.connected ? "离线" : "模拟"}
+              </span>
+            )}
+            {isLeader && <span className="seat__leader"><CrownIcon />队长</span>}
+            {selected && <span className="seat__check" aria-hidden="true">✓</span>}
           </>
         );
         return (onToggle && player) || (onEmptySeatSelect && !player) ? (
           <button
             type="button"
             key={seat}
-            className={`seat ${selected ? "seat--selected" : ""} ${isCurrent ? "seat--current" : ""}`}
+            className={`seat ${selected ? "seat--selected" : ""} ${isCurrent ? "seat--current" : ""} ${isLeader ? "seat--leader" : ""}`}
             style={style}
             onClick={() => player ? onToggle?.(player.id) : onEmptySeatSelect?.(seat)}
             disabled={disabled}
             aria-pressed={selected}
-            aria-label={`${seat}号 ${player?.nickname ?? "空位"}${selected ? "，已选中" : ""}`}
+            aria-label={`${seat}号 ${nickname}${isCurrent ? "，我的座位" : ""}${selected ? "，已选中" : ""}`}
           >
             {content}
           </button>
         ) : (
           <div
             key={seat}
-            className={`seat ${selected ? "seat--selected" : ""} ${isCurrent ? "seat--current" : ""}`}
+            className={`seat ${selected ? "seat--selected" : ""} ${isCurrent ? "seat--current" : ""} ${isLeader ? "seat--leader" : ""}`}
             style={style}
+            role="group"
+            aria-label={`${seat}号 ${nickname}${isCurrent ? "，我的座位" : ""}${selected ? "，已选中" : ""}`}
           >
             {content}
           </div>

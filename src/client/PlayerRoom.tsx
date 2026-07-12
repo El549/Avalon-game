@@ -294,17 +294,11 @@ function TeamBuilding({
     void command("team:draft-toggle", playerId).catch(() => undefined);
   };
   const visibleSelection = room.draftTeam;
-  const selectedPlayers = room.players.filter((player) => visibleSelection.includes(player.id));
   return (
     <main className="phase-screen team-building-screen">
-      <PhaseSummary room={room} />
-      <header className="phase-heading">
-        <p>第 {room.missionIndex + 1} 轮 · 当前队长 {leader?.seat}号</p>
-        <h1>{privateState.canProposeTeam ? "队长选人" : "队长正在选人"}</h1>
-        <span>
-          {privateState.canProposeTeam ? `请选择 ${mission.teamSize} 名任务队员` : `${leader?.nickname ?? "本轮队长"}正在选择 ${mission.teamSize} 名任务队员`}
-          {mission.requiresTwoFails ? " · 本轮需 2 张失败票才会失败" : " · 1 张失败票会使任务失败"}
-        </span>
+      <header className="phase-heading team-building-heading">
+        <h1><span>第 {room.missionIndex + 1} 轮</span><i> · </i><strong>{privateState.canProposeTeam ? "队长选人" : "队长正在选人"}</strong></h1>
+        <span>{privateState.canProposeTeam ? `请选择 ${mission.teamSize} 名队员` : `${leader?.nickname ?? "本轮队长"}正在选择 ${mission.teamSize} 名队员`}</span>
       </header>
       <div className="team-building-stage">
         <RoundTable
@@ -317,16 +311,15 @@ function TeamBuilding({
         />
         <p className="team-draft-summary" aria-live="polite">
           已选择 <b>{visibleSelection.length}</b> / {mission.teamSize}
-          {selectedPlayers.length > 0 && ` · ${selectedPlayers.map((player) => `${player.seat}号`).join("、")}`}
         </p>
       </div>
       <div className="phase-action-dock">
         {privateState.canProposeTeam ? (
           <button type="button" className="primary-button" disabled={selected.length !== mission.teamSize} onClick={() => runCommand(command("team:propose", selected))}>
-            确认本轮队伍
+            <span>确认队伍</span>
           </button>
         ) : (
-          <p className="put-phone-down">放下手机，参与现场讨论。</p>
+          <p className="put-phone-down">等待本轮队长确认队伍</p>
         )}
       </div>
     </main>
