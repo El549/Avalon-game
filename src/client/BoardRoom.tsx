@@ -34,15 +34,20 @@ export function BoardRoom({ roomCode }: { roomCode: string }) {
         <div className="public-board__room-code"><span>房间号</span><b>{formatRoomCode(publicState.code)}</b></div>
       </header>
       <ConnectionNotice connected={connected} error={error} />
-      <section className="public-board__stage">
-        <BoardCenter room={publicState} />
-        <RoundTable
-          players={publicState.players}
-          playerCount={publicState.settings.playerCount}
-          selectedIds={publicState.phase === "team-building" ? publicState.draftTeam : publicState.proposedTeam}
-          leaderSeat={publicState.leaderSeat}
-          label="当前圆桌座位与任务队伍"
-        />
+      <section className="public-board__main" aria-label="桌局公开信息">
+        <div className="public-board__table-stage">
+          <RoundTable
+            variant="board"
+            players={publicState.players}
+            playerCount={publicState.settings.playerCount}
+            selectedIds={publicState.phase === "team-building" ? publicState.draftTeam : publicState.proposedTeam}
+            leaderSeat={publicState.leaderSeat}
+            label="当前圆桌座位与任务队伍"
+          />
+          <div className="public-board__info" aria-label="当前游戏阶段" aria-live="polite">
+            <BoardCenter room={publicState} />
+          </div>
+        </div>
       </section>
       {publicState.phase !== "lobby" && (
         <div className="public-board__missions">
@@ -88,13 +93,13 @@ function BoardCenter({ room }: { room: PublicRoomState }) {
     return (
       <div className="board-message">
         <p>第 {room.missionIndex + 1} 轮任务</p>
-        <strong>{mission.teamSize}</strong>
-        <h1>{leader?.seat}号 {leader?.nickname} 正在组队</h1>
+        <strong>{room.draftTeam.length}/{mission.teamSize}</strong>
+        <h1>队长正在组队</h1>
         <span>
+          {leader ? `当前队长 ${leader.seat}号 ${leader.nickname} · ` : ""}
           {room.draftTeam.length > 0
             ? `已选择 ${room.draftTeam.map((id) => room.players.find((player) => player.id === id)?.seat).join("、")} 号`
             : "等待队长点选任务队员"}
-          {` · 本轮需要 ${mission.teamSize} 人`}
         </span>
       </div>
     );
@@ -174,7 +179,14 @@ function BoardCenter({ room }: { room: PublicRoomState }) {
       <div className="board-role-reveal">
         {room.players.map((player) => {
           const revealed = room.revealedRoles.find((item) => item.playerId === player.id)!;
-          return <b key={player.id} className={revealed.faction}>{player.seat}号 {player.nickname} · {ROLE_DETAILS[revealed.role].name}</b>;
+          const roleName = ROLE_DETAILS[revealed.role].name;
+          return (
+            <b key={player.id} className={revealed.faction} aria-label={`${player.seat}号 ${player.nickname}，${roleName}`}>
+              <span className="board-role-reveal__seat">{player.seat}</span>
+              <span className="board-role-reveal__context">号 {player.nickname} · </span>
+              <span className="board-role-reveal__role">{roleName}</span>
+            </b>
+          );
         })}
       </div>
     </div>

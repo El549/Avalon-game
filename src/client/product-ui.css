@@ -1,0 +1,1385 @@
+/*
+ * Product UI system
+ *
+ * This file owns responsive geometry and readable type for the player surface
+ * and the public projector surface. Decorative legacy styling stays in
+ * styles.css; layout contracts live here so later visual changes do not rely
+ * on ad-hoc viewport offsets.
+ */
+
+:root {
+  --ui-font: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  --ui-serif: "Songti SC", "STSong", "Noto Serif CJK SC", ui-serif, serif;
+  --ui-text: #12213a;
+  --ui-muted: #5e6979;
+  --ui-navy: #102a4c;
+  --ui-blue: #245f98;
+  --ui-gold: #8b6525;
+  --ui-gold-soft: #d9c49a;
+  --ui-red: #9a3640;
+  --ui-line: #cbd3dd;
+  --ui-surface: #ffffff;
+  --ui-surface-soft: #f5f8fb;
+  --ui-touch: 44px;
+  --ui-radius: 14px;
+  --ui-gap-1: 6px;
+  --ui-gap-2: 10px;
+  --ui-gap-3: 14px;
+  --ui-gap-4: 20px;
+  --player-topbar-base-height: 64px;
+}
+
+button,
+input,
+select {
+  font-family: var(--ui-font);
+}
+
+.primary-button,
+.secondary-button,
+.danger-button {
+  min-height: 52px;
+  padding: 12px 20px;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.text-link {
+  min-height: var(--ui-touch);
+  align-items: center;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Player shell and persistent controls */
+
+.player-shell {
+  height: 100dvh;
+  min-height: 100dvh;
+  padding-top: var(--player-topbar-height);
+  overflow: hidden;
+}
+
+.player-topbar {
+  min-height: var(--player-topbar-height);
+  height: var(--player-topbar-height);
+  gap: var(--ui-gap-2);
+  padding: max(8px, var(--safe-top)) 12px 8px;
+}
+
+.player-topbar .brand--compact {
+  flex: 0 0 auto;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.player-topbar .brand--compact .brand__mark {
+  width: 29px;
+  height: 29px;
+}
+
+.player-topbar__room {
+  min-width: 0;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.player-topbar__room > span {
+  max-width: 92px;
+}
+
+.player-topbar b {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.player-topbar small {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.identity-review-trigger,
+.host-controls-trigger {
+  min-width: var(--ui-touch);
+  min-height: var(--ui-touch);
+  height: var(--ui-touch);
+  padding: 0 11px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.identity-review-trigger svg {
+  width: 18px;
+  height: 18px;
+}
+
+.connection-notice {
+  min-height: var(--ui-touch);
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* Shared player-phase hierarchy */
+
+.lobby-screen,
+.phase-screen,
+.identity-screen,
+.ballot-screen,
+.waiting-panel {
+  height: calc(100dvh - var(--player-topbar-height));
+  min-height: 0;
+  padding: 16px 16px max(14px, var(--safe-bottom));
+  overflow: hidden;
+}
+
+.phase-heading {
+  flex: 0 0 auto;
+  text-align: center;
+}
+
+.phase-heading p {
+  margin: 0 0 6px;
+  font-family: var(--ui-font);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: .04em;
+}
+
+.phase-heading h1 {
+  margin: 0;
+  font: 600 clamp(26px, 7.2vw, 38px)/1.16 var(--ui-serif);
+}
+
+.phase-heading span {
+  max-width: 520px;
+  margin: 7px auto 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.42;
+}
+
+.phase-action-dock {
+  min-height: 52px;
+  display: grid;
+  align-items: end;
+}
+
+.phase-action-dock .put-phone-down {
+  margin: 0;
+}
+
+.put-phone-down {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+/* Mission progress: concise on phones, fully labelled on public screens. */
+
+.phase-summary {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.phase-summary > p {
+  margin: 3px 0 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.phase-summary > p b {
+  font-size: 15px;
+}
+
+.phase-summary .mission-track::before {
+  top: 16px;
+}
+
+.phase-summary .mission-node {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.phase-summary .mission-node__marker {
+  width: 32px;
+  height: 32px;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.phase-summary .mission-node__label {
+  display: none;
+}
+
+.phase-summary .mission-node__state {
+  margin-top: 4px;
+  white-space: nowrap;
+}
+
+/* Round table component. Its declared box contains seats, crowns and pointers. */
+
+.round-table {
+  --table-size: min(84vw, 400px);
+  --seat-size: clamp(50px, 18%, 74px);
+  width: var(--table-size);
+  height: var(--table-size);
+  aspect-ratio: 1;
+  flex: 0 0 auto;
+  position: relative;
+  margin: 0 auto;
+}
+
+.round-table__wood {
+  inset: 17%;
+  border-width: 2px;
+}
+
+.round-table__wood::before {
+  inset: -6px;
+}
+
+.round-table__wood::after {
+  inset: 9px;
+}
+
+.round-table__sigil {
+  inset: 26%;
+  width: 48%;
+}
+
+.seat {
+  top: var(--seat-top);
+  left: var(--seat-left);
+  width: var(--seat-size);
+  height: var(--seat-size);
+  transform: translate(-50%, -50%);
+  gap: 2px;
+  padding: 6px;
+  border-width: 1.5px;
+  font-family: var(--ui-font);
+}
+
+.seat__number {
+  font-family: var(--ui-serif);
+  font-size: clamp(17px, 5vw, 21px);
+  font-weight: 650;
+}
+
+.seat__name {
+  max-width: calc(var(--seat-size) - 10px);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.seat__simulated,
+.seat__offline {
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.seat__crown {
+  top: -10px;
+  width: 20px;
+  height: 20px;
+}
+
+.seat--current::after {
+  bottom: -8px;
+  border-width: 4px;
+}
+
+.round-table[data-player-count="9"],
+.round-table[data-player-count="10"] {
+  --seat-size: clamp(46px, 16%, 62px);
+}
+
+.round-table[data-player-count="9"] .seat__name,
+.round-table[data-player-count="10"] .seat__name {
+  font-size: 12px;
+}
+
+/* Waiting room */
+
+.lobby-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lobby-screen .phase-heading h1 {
+  font-size: clamp(30px, 8vw, 42px);
+}
+
+.lobby-table-stage {
+  min-height: 118px;
+  flex: 1 1 auto;
+  display: grid;
+  place-items: center;
+  container-type: size;
+}
+
+.lobby-table-stage .round-table {
+  --table-size: min(96cqw, 90cqh, 400px);
+}
+
+.experience-lobby-note {
+  flex: 0 0 auto;
+  gap: 4px;
+  margin: 0;
+  padding: 9px 12px;
+}
+
+.experience-lobby-note strong {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.experience-lobby-note span {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.lobby-status {
+  flex: 0 0 auto;
+  gap: 5px 10px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.lobby-action-dock {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 6px;
+}
+
+.lobby-action-dock .primary-button,
+.lobby-action-dock .secondary-button {
+  min-height: 48px;
+}
+
+.lobby-action-dock .text-link {
+  min-height: 34px;
+  padding: 5px 10px;
+  font-size: 13px;
+}
+
+/* Team building: progress / heading / flexible table / action. */
+
+.team-building-screen {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: clamp(7px, 1.2dvh, 12px);
+}
+
+.team-building-stage {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  place-items: center;
+  container-type: size;
+}
+
+.team-building-stage .round-table {
+  --table-size: min(100cqw, 90cqh, 410px);
+  place-self: center;
+}
+
+.team-draft-summary {
+  width: 100%;
+  min-height: 22px;
+  max-height: none;
+  margin: 2px 0 0;
+  overflow: visible;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.team-draft-summary b {
+  color: var(--ui-gold);
+  font-size: 18px;
+}
+
+/* Other player states: readable type is a hard floor, not a shrink target. */
+
+.public-vote-team {
+  margin-top: 7px;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.show-of-hands-seal small,
+.vote-recorder > p,
+.countdown-seal span {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.vote-recorder > div button {
+  min-width: var(--ui-touch);
+  min-height: var(--ui-touch);
+}
+
+.waiting-panel h1 {
+  font-size: clamp(29px, 8vw, 38px);
+  font-weight: 600;
+}
+
+.waiting-panel p {
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.waiting-panel > span {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ballot-screen header p,
+.ballot-screen header span {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.ballot-screen {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  gap: 10px;
+}
+
+.ballot-screen header {
+  margin-bottom: 0;
+}
+
+.ballot-options {
+  width: 100%;
+  align-self: center;
+}
+
+.ballot-warning,
+.ballot-screen > .primary-button {
+  margin: 0;
+}
+
+.ballot-screen header h1 {
+  font-size: clamp(27px, 7.5vw, 36px);
+  font-weight: 600;
+}
+
+.ballot-option {
+  min-height: 102px;
+}
+
+.ballot-option strong {
+  font-size: 24px;
+  font-weight: 650;
+}
+
+.ballot-option small {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.ballot-option:disabled {
+  opacity: .72;
+  color: var(--ui-muted);
+}
+
+.ballot-option:disabled strong,
+.ballot-option:disabled small {
+  color: #647083;
+}
+
+.ballot-warning {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.target-list button {
+  min-height: 52px;
+}
+
+.target-list strong,
+.role-reveal-row {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.role-reveal-row {
+  min-height: 38px;
+}
+
+.host-controls-sheet > header span,
+.host-player-status > div > span,
+.host-player-status > div > small,
+.host-player-status > div > button,
+.host-qr-panel > p,
+.host-danger-confirm p {
+  font-size: 12px;
+}
+
+.host-player-status > div > strong,
+.host-qr-tabs button {
+  font-size: 14px;
+}
+
+.host-controls-sheet > header > button {
+  min-width: var(--ui-touch);
+  min-height: var(--ui-touch);
+}
+
+/* Identity reveal uses the full vault instead of clipping long role details. */
+
+.identity-screen {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 12px 14px max(12px, var(--safe-bottom));
+}
+
+.identity-screen__header {
+  min-height: 62px;
+}
+
+.identity-screen__header p {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.identity-screen__header h1 {
+  margin-top: 4px;
+  font-size: clamp(24px, 6.4vw, 32px);
+  font-weight: 600;
+}
+
+.identity-screen__header span {
+  min-height: 18px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.identity-vault .identity-details {
+  inset: 10px;
+  max-height: none;
+  padding: 14px;
+  overflow: auto;
+  justify-content: center;
+}
+
+.identity-vault .identity-details h2 {
+  margin: 3px 0 5px;
+  font-size: clamp(32px, 9vw, 46px);
+  font-weight: 600;
+}
+
+.identity-vault .identity-details p,
+.identity-vault .identity-details__faction,
+.identity-vault .identity-details__objective {
+  margin: 4px 0;
+  font-size: 13px !important;
+  font-weight: 550;
+  line-height: 1.38;
+}
+
+.identity-vault .known-players {
+  gap: 6px;
+  margin: 6px 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.identity-vault .known-players > div {
+  gap: 5px;
+}
+
+.identity-vault .known-players b {
+  min-height: 29px;
+  display: grid;
+  place-items: center;
+  padding: 5px 7px;
+  font-size: 12px;
+}
+
+.identity-vault__hidden span {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.identity-action-dock {
+  min-height: 102px;
+  grid-template-rows: 56px 40px;
+}
+
+.hold-seal {
+  height: 56px;
+}
+
+.hold-seal span {
+  font-size: 16px;
+}
+
+.hold-seal small,
+.hold-seal::after {
+  font-size: 12px;
+}
+
+.identity-confirm-button,
+.identity-close-button {
+  height: 40px;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+/* Public screen: a true 16:9 stage for TVs and projectors. */
+
+html.board-route,
+body.board-route,
+body.board-route #root {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #fff;
+}
+
+.public-board {
+  --board-safe-x: clamp(24px, 2.7vw, 72px);
+  --board-safe-y: clamp(10px, 1.5dvh, 24px);
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  color: var(--ui-text);
+  background: #fff;
+}
+
+.public-board::before {
+  opacity: .72;
+}
+
+.public-board::after {
+  inset: clamp(8px, 1vw, 18px);
+  border-width: 1.5px;
+}
+
+.public-board__topbar {
+  min-height: clamp(58px, 9dvh, 104px);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: clamp(18px, 2.5vw, 48px);
+  padding: var(--board-safe-y) var(--board-safe-x);
+  border-bottom-width: 1.5px;
+}
+
+.public-board__topbar .brand {
+  font-size: clamp(24px, 2.2vw, 42px);
+  font-weight: 650;
+}
+
+.public-board__topbar .brand__mark {
+  width: clamp(36px, 3.5vw, 64px);
+  height: clamp(36px, 3.5vw, 64px);
+}
+
+.public-board__room-name,
+.public-board__room-code {
+  gap: 12px;
+  font-size: clamp(14px, 1vw, 20px);
+  font-weight: 600;
+}
+
+.public-board__room-name strong {
+  font-size: clamp(26px, 2.3vw, 44px);
+  font-weight: 600;
+}
+
+.public-board__room-code b {
+  font-size: clamp(30px, 2.8vw, 52px);
+  font-weight: 650;
+}
+
+.public-board__main {
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  z-index: 2;
+  overflow: hidden;
+  padding: 0 var(--board-safe-x);
+}
+
+.public-board__table-stage {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  container-type: size;
+}
+
+.public-board .round-table[data-variant="board"] {
+  --table-size: auto;
+  --seat-size: auto;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  aspect-ratio: auto;
+  margin: 0;
+}
+
+.public-board .round-table[data-variant="board"] .round-table__wood {
+  inset: 10% 4.5%;
+  border-width: 2px;
+  border-radius: 50%;
+  background:
+    radial-gradient(ellipse at center, rgb(255 255 255 / 96%) 0 48%, rgb(230 235 242 / 76%) 49% 49.4%, transparent 50%),
+    repeating-radial-gradient(ellipse at center, transparent 0 32px, rgb(24 55 91 / 6%) 33px 35px),
+    #f8fafc;
+  box-shadow: inset 0 0 0 7px #fff, 0 18px 52px rgb(20 38 62 / 9%);
+}
+
+.public-board .round-table[data-variant="board"] .round-table__wood::before {
+  inset: -9px;
+}
+
+.public-board .round-table[data-variant="board"] .round-table__wood::after {
+  inset: 16px 28px;
+}
+
+.public-board .round-table[data-variant="board"] .round-table__sigil {
+  width: 26%;
+  inset: 26% 37%;
+}
+
+.public-board .round-table[data-variant="board"] .seat {
+  width: clamp(150px, 12.5vw, 210px);
+  height: clamp(62px, 8.5dvh, 104px);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: clamp(7px, .8vw, 14px);
+  align-content: center;
+  justify-items: start;
+  padding: clamp(8px, .9vw, 16px);
+  border-width: 2px;
+  border-radius: clamp(16px, 1.8vw, 30px);
+  text-align: left;
+}
+
+.public-board .round-table[data-variant="board"] .seat__number {
+  grid-row: 1 / 3;
+  align-self: center;
+  min-width: 1.1em;
+  font-size: clamp(28px, 2.5vw, 46px);
+  font-weight: 650;
+  text-align: center;
+}
+
+.public-board .round-table[data-variant="board"] .seat__name {
+  max-width: 100%;
+  align-self: end;
+  color: var(--ui-text);
+  font-size: clamp(16px, 1.35vw, 26px);
+  font-weight: 700;
+  line-height: 1.15;
+}
+
+.public-board .round-table[data-variant="board"] .seat__simulated,
+.public-board .round-table[data-variant="board"] .seat__offline {
+  align-self: start;
+  font-size: clamp(13px, .95vw, 18px);
+  font-weight: 650;
+}
+
+.public-board .round-table[data-variant="board"] .seat__crown {
+  top: clamp(-16px, -1.2vw, -10px);
+  left: 50%;
+  width: clamp(24px, 2.2vw, 40px);
+  height: clamp(24px, 2.2vw, 40px);
+  transform: translateX(-50%);
+}
+
+.public-board .round-table[data-variant="board"] .seat--selected .seat__name {
+  color: #fff;
+}
+
+.public-board__info {
+  position: absolute;
+  z-index: 10;
+  inset: 50% auto auto 50%;
+  width: min(48%, 820px);
+  max-height: 70%;
+  display: grid;
+  place-items: center;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  pointer-events: none;
+}
+
+.public-board--lobby .public-board__info {
+  transform: translate(-50%, calc(-50% + clamp(8px, 1.5dvh, 18px)));
+}
+
+.public-board--complete .public-board__info {
+  width: min(52%, 850px);
+}
+
+.board-message {
+  width: 100%;
+  max-height: none;
+  position: static;
+  overflow: visible;
+  color: var(--ui-text);
+  font-family: var(--ui-font);
+}
+
+.board-message > p {
+  margin: 0 0 clamp(6px, 1dvh, 14px);
+  font-size: clamp(16px, 1.35vw, 26px);
+  font-weight: 700;
+  letter-spacing: .06em;
+}
+
+.board-message > strong {
+  font: 650 clamp(58px, 7vw, 132px)/.92 var(--ui-serif);
+}
+
+.board-message h1 {
+  margin: clamp(5px, 1dvh, 13px) 0 0;
+  font: 650 clamp(32px, 3.6vw, 68px)/1.12 var(--ui-serif);
+}
+
+.board-message > span {
+  display: block;
+  margin-top: clamp(8px, 1.2dvh, 16px);
+  overflow: visible;
+  color: var(--ui-muted);
+  font-size: clamp(16px, 1.4vw, 27px);
+  font-weight: 550;
+  line-height: 1.38;
+  -webkit-line-clamp: unset;
+}
+
+.board-message--lobby h1 {
+  font-size: clamp(34px, 3.8vw, 72px);
+}
+
+.board-message--lobby p {
+  font-size: clamp(18px, 1.5vw, 28px);
+}
+
+.board-experience-ready {
+  width: min(100%, 560px);
+  gap: 6px;
+  margin: clamp(10px, 1.6dvh, 22px) auto;
+  padding: clamp(10px, 1.2vw, 20px);
+  border-width: 2px;
+}
+
+.board-experience-ready strong {
+  font-size: clamp(22px, 2vw, 38px);
+  font-weight: 650;
+}
+
+.board-experience-ready span {
+  font-size: clamp(14px, 1.1vw, 21px);
+  font-weight: 550;
+}
+
+.board-qr {
+  width: clamp(118px, 20dvh, 240px);
+  max-width: none;
+  margin-top: clamp(8px, 1.2dvh, 18px);
+  border-width: clamp(6px, .6vw, 11px);
+}
+
+.board-seal-animation {
+  width: clamp(76px, 9vmin, 150px);
+  margin: 4px auto 12px;
+  border-width: 2px;
+}
+
+.board-seal-animation i {
+  transform-origin: 5px calc(clamp(76px, 9vmin, 150px) / 2 + 5px);
+}
+
+.board-ballots {
+  gap: clamp(7px, .8vw, 14px);
+  margin-top: clamp(8px, 1.3dvh, 18px);
+}
+
+.board-ballots i {
+  width: clamp(32px, 3vw, 56px);
+  height: clamp(46px, 4.2vw, 78px);
+  font-size: clamp(18px, 1.7vw, 32px);
+}
+
+.board-role-reveal {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(5px, .6dvh, 10px) clamp(12px, 1.4vw, 28px);
+  margin-top: clamp(10px, 1.5dvh, 20px);
+}
+
+.board-role-reveal b {
+  min-width: 0;
+  overflow: hidden;
+  font-size: clamp(18px, 1.25vw, 24px);
+  font-weight: 700;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board-message--complete > strong {
+  font-size: clamp(48px, 5vw, 84px);
+}
+
+.board-message--complete h1 {
+  font-size: clamp(34px, 3vw, 58px);
+}
+
+.public-board__missions {
+  width: 100%;
+  min-height: clamp(70px, 12dvh, 130px);
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: clamp(22px, 3vw, 56px);
+  padding: 8px var(--board-safe-x) max(10px, var(--board-safe-y));
+  border-top: 1.5px solid rgb(139 101 37 / 22%);
+}
+
+.public-board__missions .mission-track::before {
+  top: calc(clamp(42px, 6.5dvh, 72px) / 2);
+  height: 2px;
+}
+
+.public-board__missions .mission-node {
+  font-size: clamp(14px, 1.25vw, 22px);
+  font-weight: 650;
+}
+
+.public-board__missions .mission-node__marker {
+  width: clamp(42px, 6.5dvh, 72px);
+  height: clamp(42px, 6.5dvh, 72px);
+  border-width: 2px;
+  font-size: clamp(20px, 2.3dvh, 34px);
+  font-weight: 650;
+}
+
+.public-board__missions .mission-node__label {
+  margin-top: 5px;
+}
+
+.public-board__missions .mission-node__state {
+  margin-top: 2px;
+}
+
+.public-board__missions > p {
+  font-size: clamp(15px, 1.15vw, 21px);
+  font-weight: 650;
+}
+
+.public-board__missions > p b {
+  font-size: clamp(26px, 2.4vw, 44px);
+  font-weight: 700;
+}
+
+.public-board > .connection-notice {
+  top: clamp(66px, 10dvh, 112px);
+  width: min(calc(100% - 2 * var(--board-safe-x)), 1100px);
+  font-size: clamp(16px, 1.2vw, 22px);
+}
+
+/* Small phones: preserve type; reduce decoration and spacing instead. */
+
+@media (max-width: 600px) {
+  .player-topbar--crowded .player-topbar__room > span,
+  .player-topbar--crowded .player-topbar__room > small,
+  .player-topbar--crowded .brand span {
+    display: none;
+  }
+
+  .player-topbar--crowded .brand {
+    gap: 0;
+  }
+
+  .lobby-screen,
+  .phase-screen,
+  .ballot-screen,
+  .waiting-panel {
+    padding-right: 14px;
+    padding-left: 14px;
+  }
+}
+
+@media (max-width: 600px) and (max-height: 700px) {
+  :root {
+    --player-topbar-base-height: 60px;
+  }
+
+  .primary-button,
+  .secondary-button,
+  .danger-button {
+    min-height: 48px;
+    padding: 9px 14px;
+    font-size: 15px;
+  }
+
+  .lobby-screen,
+  .phase-screen,
+  .ballot-screen,
+  .waiting-panel {
+    padding-top: 8px;
+    padding-bottom: max(8px, var(--safe-bottom));
+  }
+
+  .phase-heading p {
+    margin-bottom: 3px;
+    font-size: 12px;
+  }
+
+  .phase-heading h1 {
+    font-size: clamp(23px, 6.5vw, 29px);
+  }
+
+  .phase-heading span {
+    margin-top: 4px;
+    font-size: 12px;
+    line-height: 1.3;
+  }
+
+  .phase-summary .mission-node__marker {
+    width: 28px;
+    height: 28px;
+    font-size: 14px;
+  }
+
+  .phase-summary .mission-track::before {
+    top: 14px;
+  }
+
+  .phase-summary .mission-node,
+  .phase-summary > p {
+    font-size: 12px;
+  }
+
+  .team-building-screen {
+    gap: 5px;
+  }
+
+  .team-building-stage .round-table {
+    --table-size: min(96cqw, 90cqh, 330px);
+  }
+
+  .team-draft-summary {
+    min-height: 18px;
+    font-size: 12px;
+  }
+
+  .team-draft-summary b {
+    font-size: 16px;
+  }
+
+  .round-table {
+    --seat-size: clamp(46px, 18%, 62px);
+  }
+
+  .seat__number {
+    font-size: 16px;
+  }
+
+  .seat__name {
+    font-size: 12px;
+  }
+
+  .lobby-screen {
+    gap: 5px;
+  }
+
+  .lobby-screen .phase-heading h1 {
+    font-size: 28px;
+  }
+
+  .experience-lobby-note {
+    padding: 7px 9px;
+  }
+
+  .experience-lobby-note span,
+  .lobby-status {
+    font-size: 12px;
+  }
+
+  .lobby-action-dock {
+    gap: 4px;
+  }
+
+  .lobby-action-dock .primary-button,
+  .lobby-action-dock .secondary-button {
+    min-height: 44px;
+  }
+
+  .lobby-action-dock .text-link {
+    min-height: 30px;
+  }
+
+  .identity-screen {
+    gap: 6px;
+    padding: 7px 11px max(8px, var(--safe-bottom));
+  }
+
+  .identity-screen__header {
+    min-height: 48px;
+  }
+
+  .identity-screen__header p,
+  .identity-screen__header span {
+    font-size: 12px;
+  }
+
+  .identity-screen__header h1 {
+    margin-top: 1px;
+    font-size: 22px;
+  }
+
+  .identity-vault .identity-details {
+    inset: 7px;
+    padding: 9px;
+  }
+
+  .identity-vault .identity-details h2 {
+    font-size: 29px;
+  }
+
+  .identity-vault .identity-details p,
+  .identity-vault .identity-details__faction,
+  .identity-vault .identity-details__objective {
+    margin: 2px 0;
+    font-size: 12px !important;
+    line-height: 1.28;
+  }
+
+  .identity-vault .known-players,
+  .identity-vault .known-players b {
+    font-size: 12px;
+  }
+
+  .identity-vault .known-players b {
+    min-height: 25px;
+    padding: 3px 5px;
+  }
+
+  .identity-action-dock {
+    min-height: 88px;
+    grid-template-rows: 50px 34px;
+    gap: 4px;
+  }
+
+  .hold-seal {
+    height: 50px;
+  }
+
+  .hold-seal span {
+    font-size: 14px;
+  }
+
+  .hold-seal small,
+  .hold-seal::after {
+    font-size: 12px;
+  }
+
+  .identity-confirm-button,
+  .identity-close-button {
+    height: 34px;
+    font-size: 13px;
+  }
+
+  .ballot-option small,
+  .ballot-warning,
+  .waiting-panel > span,
+  .public-vote-team,
+  .vote-recorder > p {
+    font-size: 12px;
+  }
+
+  .ballot-screen {
+    gap: 6px;
+  }
+}
+
+/* Low-height projector windows keep the same hierarchy with tighter chrome. */
+
+@media (max-height: 760px) {
+  .board-message--complete > p,
+  .board-message--complete > strong {
+    display: none;
+  }
+
+  .board-message--complete h1 {
+    margin: 0;
+    font-size: 30px;
+  }
+
+  .board-message--complete > span {
+    margin-top: 3px;
+    font-size: 14px;
+  }
+
+  .board-message--complete .board-role-reveal {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 4px;
+    margin-top: 5px;
+  }
+
+  .board-message--complete .board-role-reveal b {
+    display: flex;
+    gap: 3px;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    line-height: 1.15;
+  }
+
+  .board-message--complete .board-role-reveal__seat {
+    font-size: 13px;
+  }
+
+  .board-message--complete .board-role-reveal__context {
+    display: none;
+  }
+}
+
+@media (max-height: 650px) {
+  .public-board {
+    --board-safe-y: 7px;
+  }
+
+  .public-board__topbar {
+    min-height: 54px;
+  }
+
+  .public-board__topbar .brand {
+    font-size: 22px;
+  }
+
+  .public-board__topbar .brand__mark {
+    width: 32px;
+    height: 32px;
+  }
+
+  .public-board__room-name strong {
+    font-size: 24px;
+  }
+
+  .public-board__room-code b {
+    font-size: 28px;
+  }
+
+  .board-message > p {
+    font-size: 14px;
+  }
+
+  .board-message > strong {
+    font-size: clamp(48px, 9dvh, 64px);
+  }
+
+  .board-message h1 {
+    font-size: clamp(30px, 5.8dvh, 38px);
+  }
+
+  .board-message > span {
+    margin-top: 5px;
+    font-size: 14px;
+  }
+
+  .board-qr {
+    width: clamp(108px, 22dvh, 138px);
+  }
+
+  .board-experience-ready {
+    margin: 5px auto;
+    padding: 6px 10px;
+  }
+
+  .board-message--lobby > span {
+    display: none;
+  }
+
+  .public-board__missions {
+    min-height: 64px;
+    padding-top: 4px;
+    padding-bottom: 5px;
+  }
+
+  .public-board__missions .mission-node__marker {
+    width: 38px;
+    height: 38px;
+    font-size: 18px;
+  }
+
+  .public-board__missions .mission-track::before {
+    top: 19px;
+  }
+
+  .public-board__missions .mission-node {
+    font-size: 13px;
+  }
+
+  .public-board__missions > p {
+    font-size: 14px;
+  }
+}
+
+@media (max-width: 900px) {
+  .public-board {
+    --board-safe-x: 18px;
+  }
+
+  .public-board__topbar .brand span,
+  .public-board__room-name > span,
+  .public-board__room-code > span {
+    display: none;
+  }
+
+  .public-board .round-table[data-variant="board"] .seat {
+    width: clamp(72px, 9vw, 92px);
+    height: clamp(54px, 8dvh, 70px);
+    column-gap: 5px;
+    padding: 7px;
+  }
+
+  .public-board .round-table[data-variant="board"] .seat__number {
+    font-size: clamp(23px, 3vw, 30px);
+  }
+
+  .public-board .round-table[data-variant="board"] .seat__name {
+    font-size: 14px;
+  }
+
+  .public-board__info {
+    width: 50%;
+  }
+}
+
+@media (min-width: 1920px) and (min-height: 900px) {
+  .public-board__info {
+    width: min(46%, 900px);
+  }
+
+  .public-board .round-table[data-variant="board"] .seat__name {
+    font-size: clamp(21px, 1.25vw, 28px);
+  }
+}

@@ -5,6 +5,7 @@ import { CrownIcon } from "../icons";
 interface RoundTableProps {
   players: PublicPlayer[];
   playerCount: number;
+  variant?: "player" | "board";
   selectedIds?: string[];
   selectedSeats?: number[];
   currentPlayerId?: string;
@@ -18,6 +19,7 @@ interface RoundTableProps {
 export function RoundTable({
   players,
   playerCount,
+  variant = "player",
   selectedIds = [],
   selectedSeats = [],
   currentPlayerId,
@@ -27,8 +29,18 @@ export function RoundTable({
   disabled = false,
   label = "圆桌座位",
 }: RoundTableProps) {
+  const orbit = variant === "board"
+    ? { radiusX: 43, radiusY: 34 }
+    : { radiusX: 35, radiusY: 35 };
+
   return (
-    <div className="round-table" role="group" aria-label={label}>
+    <div
+      className="round-table"
+      role="group"
+      aria-label={label}
+      data-player-count={playerCount}
+      data-variant={variant}
+    >
       <div className="round-table__wood" aria-hidden="true">
         <RoundTableCenter />
       </div>
@@ -37,7 +49,11 @@ export function RoundTable({
         const selected = player ? selectedIds.includes(player.id) : selectedSeats.includes(seat);
         const isCurrent = player?.id === currentPlayerId;
         const isLeader = seat === leaderSeat;
-        const style = { "--seat-angle": `${(seat - 1) * (360 / playerCount) - 90}deg` } as CSSProperties;
+        const angle = ((seat - 1) * (Math.PI * 2)) / playerCount - Math.PI / 2;
+        const style = {
+          "--seat-left": `${(50 + Math.cos(angle) * orbit.radiusX).toFixed(3)}%`,
+          "--seat-top": `${(50 + Math.sin(angle) * orbit.radiusY).toFixed(3)}%`,
+        } as CSSProperties;
         const content = (
           <>
             {isLeader && <CrownIcon className="seat__crown" />}

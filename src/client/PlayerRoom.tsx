@@ -208,7 +208,9 @@ function Lobby({
         <p>房间号 {formatRoomCode(room.code)}</p>
         <span>{room.players.length} / {room.settings.playerCount} 已就座</span>
       </header>
-      <RoundTable players={room.players} playerCount={room.settings.playerCount} currentPlayerId={me.id} />
+      <div className="lobby-table-stage">
+        <RoundTable variant="player" players={room.players} playerCount={room.settings.playerCount} currentPlayerId={me.id} />
+      </div>
       {isExperience && (
         <div className="experience-lobby-note">
           <strong>第二台手机加入 2 号位</strong>
@@ -240,37 +242,37 @@ function Lobby({
           <button type="button" className="text-link" onClick={() => setChangingSeat(false)}>取消换座</button>
         </div>
       )}
-      {!isExperience && openSeats.length > 0 && (
-        <button type="button" className="text-link" onClick={() => setChangingSeat((value) => !value)}>
-          {changingSeat ? "取消换座" : "换一个座位"}
+      <div className="lobby-action-dock">
+        {!isExperience && openSeats.length > 0 && (
+          <button type="button" className="text-link" onClick={() => setChangingSeat((value) => !value)}>
+            {changingSeat ? "取消换座" : "换一个座位"}
+          </button>
+        )}
+        <button type="button" className={me.ready ? "secondary-button" : "primary-button"} onClick={() => runCommand(command("player:ready", !me.ready))}>
+          {me.ready ? "取消准备" : "确认座位并准备"}
         </button>
-      )}
-      <button type="button" className={me.ready ? "secondary-button" : "primary-button"} onClick={() => runCommand(command("player:ready", !me.ready))}>
-        {me.ready ? "取消准备" : "确认座位并准备"}
-      </button>
-      {me.isHost && (
-        <>
+        {me.isHost && (
           <button type="button" className="primary-button" disabled={!everyoneReady} onClick={() => runCommand(command("game:start"))}>
             {isExperience ? "开始完整流程体验" : "开始分配身份"}
           </button>
-        </>
-      )}
-      {!exitAction ? (
-        <button type="button" className="text-link lobby-exit-trigger" onClick={() => setExitAction(me.isHost ? "dissolve" : "leave")}>
-          {me.isHost ? "解散房间并重新创建" : "离开房间"}
-        </button>
-      ) : (
-        <div className="lobby-confirm-overlay">
-          <div className="lobby-exit-confirm" role="alertdialog" aria-modal="true" aria-label={exitAction === "dissolve" ? "确认解散房间" : "确认离开房间"}>
-            <strong>{exitAction === "dissolve" ? "确定解散这个房间？" : "确定离开这个房间？"}</strong>
-            <p>{exitAction === "dissolve" ? "所有人会回到首页，旧房间号立即失效。" : "你的座位会立即释放，之后需要重新选择座位加入。"}</p>
-            <button type="button" className="danger-button" disabled={exiting} onClick={() => void confirmExit()}>
-              {exiting ? "正在处理…" : exitAction === "dissolve" ? "确认解散并返回首页" : "确认离开并释放座位"}
-            </button>
-            <button type="button" className="text-link" disabled={exiting} onClick={() => setExitAction(null)}>继续等待</button>
+        )}
+        {!exitAction ? (
+          <button type="button" className="text-link lobby-exit-trigger" onClick={() => setExitAction(me.isHost ? "dissolve" : "leave")}>
+            {me.isHost ? "解散房间并重新创建" : "离开房间"}
+          </button>
+        ) : (
+          <div className="lobby-confirm-overlay">
+            <div className="lobby-exit-confirm" role="alertdialog" aria-modal="true" aria-label={exitAction === "dissolve" ? "确认解散房间" : "确认离开房间"}>
+              <strong>{exitAction === "dissolve" ? "确定解散这个房间？" : "确定离开这个房间？"}</strong>
+              <p>{exitAction === "dissolve" ? "所有人会回到首页，旧房间号立即失效。" : "你的座位会立即释放，之后需要重新选择座位加入。"}</p>
+              <button type="button" className="danger-button" disabled={exiting} onClick={() => void confirmExit()}>
+                {exiting ? "正在处理…" : exitAction === "dissolve" ? "确认解散并返回首页" : "确认离开并释放座位"}
+              </button>
+              <button type="button" className="text-link" disabled={exiting} onClick={() => setExitAction(null)}>继续等待</button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </main>
   );
 }
@@ -297,28 +299,36 @@ function TeamBuilding({
     <main className="phase-screen team-building-screen">
       <PhaseSummary room={room} />
       <header className="phase-heading">
-        <p>当前队长 · {leader?.seat}号 {leader?.nickname}</p>
-        <h1>{privateState.canProposeTeam ? `选择 ${mission.teamSize} 名任务队员` : "队长正在组队"}</h1>
-        <span>{mission.requiresTwoFails ? "本轮需要 2 张失败票才会失败" : "1 张失败票将使任务失败"}</span>
+        <p>第 {room.missionIndex + 1} 轮 · 当前队长 {leader?.seat}号</p>
+        <h1>{privateState.canProposeTeam ? "队长选人" : "队长正在选人"}</h1>
+        <span>
+          {privateState.canProposeTeam ? `请选择 ${mission.teamSize} 名任务队员` : `${leader?.nickname ?? "本轮队长"}正在选择 ${mission.teamSize} 名任务队员`}
+          {mission.requiresTwoFails ? " · 本轮需 2 张失败票才会失败" : " · 1 张失败票会使任务失败"}
+        </span>
       </header>
-      <p className="team-draft-summary" aria-live="polite">
-        已选择 {visibleSelection.length} / {mission.teamSize}
-        {selectedPlayers.length > 0 && ` · ${selectedPlayers.map((player) => `${player.seat}号`).join("、")}`}
-      </p>
-      <RoundTable
-        players={room.players}
-        playerCount={room.settings.playerCount}
-        selectedIds={visibleSelection}
-        leaderSeat={room.leaderSeat}
-        onToggle={privateState.canProposeTeam ? toggle : undefined}
-      />
-      {privateState.canProposeTeam ? (
-        <button type="button" className="primary-button" disabled={selected.length !== mission.teamSize} onClick={() => runCommand(command("team:propose", selected))}>
-          确认本轮队伍
-        </button>
-      ) : (
-        <p className="put-phone-down">放下手机，参与现场讨论。</p>
-      )}
+      <div className="team-building-stage">
+        <RoundTable
+          variant="player"
+          players={room.players}
+          playerCount={room.settings.playerCount}
+          selectedIds={visibleSelection}
+          leaderSeat={room.leaderSeat}
+          onToggle={privateState.canProposeTeam ? toggle : undefined}
+        />
+        <p className="team-draft-summary" aria-live="polite">
+          已选择 <b>{visibleSelection.length}</b> / {mission.teamSize}
+          {selectedPlayers.length > 0 && ` · ${selectedPlayers.map((player) => `${player.seat}号`).join("、")}`}
+        </p>
+      </div>
+      <div className="phase-action-dock">
+        {privateState.canProposeTeam ? (
+          <button type="button" className="primary-button" disabled={selected.length !== mission.teamSize} onClick={() => runCommand(command("team:propose", selected))}>
+            确认本轮队伍
+          </button>
+        ) : (
+          <p className="put-phone-down">放下手机，参与现场讨论。</p>
+        )}
+      </div>
     </main>
   );
 }
