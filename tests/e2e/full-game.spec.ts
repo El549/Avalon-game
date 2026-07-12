@@ -21,6 +21,18 @@ interface CommandResult {
 }
 
 const EXPERIENCE_PLAYER_NAMES = ["第一台手机", "第二台手机", "模拟骑士A", "模拟骑士B", "模拟骑士C"];
+const MOBILE_LONG_PLAYER_NAMES = [
+  "湖畔远征守望骑士甲乙丙丁",
+  "星辉王庭守门骑士甲乙丙丁",
+  "迷雾森林巡夜骑士甲乙丙丁",
+  "圆桌边缘观察骑士甲乙丙丁",
+  "圣杯远征记录骑士甲乙丙丁",
+  "永夜城堡守望骑士甲乙丙丁",
+  "古老王庭引路骑士甲乙丙丁",
+  "风暴海岸传信骑士甲乙丙丁",
+  "月桂王冠保管骑士甲乙丙丁",
+  "北境烽火巡查骑士甲乙丙丁",
+];
 const BOARD_LONG_PLAYER_NAMES = [
   "湖畔圆桌远征骑士甲乙丙丁",
   "星辉王庭守门骑士甲乙丙丁",
@@ -129,7 +141,7 @@ test("七人桌局从创建、认身份到刺杀和重开完整可用", async ({
 
     // 模拟一名玩家刷新页面，确认座位、身份和当前进度都能恢复。
     await players[3].page.reload();
-    await expect(players[3].page.getByRole("heading", { name: /第 \d+ 轮 · 队长(?:正在)?选人/ })).toBeVisible();
+    await expect(players[3].page.getByRole("heading", { name: /第 \d+ 轮 · (?:选择队员|队长选人中)/ })).toBeVisible();
 
     for (let missionIndex = 0; missionIndex < 3; missionIndex += 1) {
       const publicResponse = await request.get(`/api/rooms/${roomCode}/public`);
@@ -143,7 +155,7 @@ test("七人桌局从创建、认身份到刺杀和重开完整可用", async ({
       const leaderSeat = body.data.leaderSeat;
       const teamSize = body.data.missions[body.data.missionIndex].teamSize;
       const leaderPage = players[leaderSeat - 1].page;
-      await expect(leaderPage.getByRole("heading", { name: `第 ${missionIndex + 1} 轮 · 队长选人` })).toBeVisible();
+      await expect(leaderPage.getByRole("heading", { name: `第 ${missionIndex + 1} 轮 · 选择队员` })).toBeVisible();
       await expect(leaderPage.getByText(`请选择 ${teamSize} 名队员`, { exact: true })).toBeVisible();
       if (missionIndex === 0) await expectTeamBuildingLayout(leaderPage, 7, { width: 390, height: 844 });
       const seatButtons = leaderPage.locator(".round-table button.seat");
@@ -349,7 +361,7 @@ test("两台手机可以通过流程体验走到刺杀与结局", async ({ page,
     for (let mission = 0; mission < 3; mission += 1) {
       if (mission === 0) {
         const confirmTeam = page.getByRole("button", { name: "确认队伍" });
-        await expect(page.getByRole("heading", { name: "第 1 轮 · 队长选人" })).toBeVisible();
+        await expect(page.getByRole("heading", { name: "第 1 轮 · 选择队员" })).toBeVisible();
         await expect(page.getByText("请选择 2 名队员", { exact: true })).toBeVisible();
         await expectTeamBuildingLayout(page, 5, { width: 360, height: 640 });
         await expectSeatNamesFullyVisible(page, {
@@ -357,12 +369,14 @@ test("两台手机可以通过流程体验走到刺杀与结局", async ({ page,
           nameSelector: ".seat__name",
           expectedNames: EXPERIENCE_PLAYER_NAMES,
           context: "360×640 体验组队页",
+          maxLines: 1,
         });
         await expectSeatNamesFullyVisible(second, {
           seatSelector: ".team-building-stage .seat",
           nameSelector: ".seat__name",
           expectedNames: EXPERIENCE_PLAYER_NAMES,
           context: "390×844 体验组队页",
+          maxLines: 1,
         });
         if (process.env.CAPTURE_VISUAL_QA) {
           await page.screenshot({ path: "/tmp/avalon-team-building-360.png", fullPage: false });
@@ -371,7 +385,7 @@ test("两台手机可以通过流程体验走到刺杀与结局", async ({ page,
         await expect(confirmTeam).toBeEnabled();
         await confirmTeam.click();
       } else if (mission === 1) {
-        await expect(second.getByRole("heading", { name: "第 2 轮 · 队长选人" })).toBeVisible();
+        await expect(second.getByRole("heading", { name: "第 2 轮 · 选择队员" })).toBeVisible();
         await expect(second.getByText("请选择 3 名队员", { exact: true })).toBeVisible();
         await expectGameScreenFits(second, second.getByRole("button", { name: "确认队伍" }));
         await second.getByRole("button", { name: /3号 模拟骑士A/ }).click();
@@ -465,6 +479,128 @@ test("两台手机可以通过流程体验走到刺杀与结局", async ({ page,
   } finally {
     await secondContext.close();
     await boardContext.close();
+  }
+});
+
+test("两台手机环境下五至十人个人手机组队页在小屏与长姓名下保持清楚可用", async ({ page, request }) => {
+  test.setTimeout(180_000);
+  const viewports = [
+    { width: 320, height: 568 },
+    { width: 360, height: 640 },
+    { width: 375, height: 667 },
+    { width: 390, height: 844 },
+    { width: 428, height: 926 },
+  ];
+  await page.goto("/");
+  const origin = new URL(page.url()).origin;
+
+  for (const playerCount of [5, 6, 7, 8, 9, 10]) {
+    const created = await request.post("/api/rooms", {
+      data: { nickname: MOBILE_LONG_PLAYER_NAMES[0], playerCount, rolePreset: "advanced", rejectionRule: "evil-wins" },
+    });
+    expect(created.status()).toBe(201);
+    const createdBody = await created.json() as { data: { credentials: Credentials } };
+    const roomCode = createdBody.data.credentials.roomCode;
+    const credentials = [createdBody.data.credentials];
+    for (let seat = 2; seat <= playerCount; seat += 1) {
+      const joined = await request.post(`/api/rooms/${roomCode}/join`, {
+        data: { nickname: MOBILE_LONG_PLAYER_NAMES[seat - 1], seat },
+      });
+      expect(joined.status()).toBe(201);
+      const joinedBody = await joined.json() as { data: { credentials: Credentials } };
+      credentials.push(joinedBody.data.credentials);
+    }
+
+    const sockets = await Promise.all(credentials.map((entry) => connectPlayerSocket(origin, entry)));
+    try {
+      const readyResults = await Promise.all(sockets.map((socket) => setPlayerReady(socket)));
+      for (const result of readyResults) expect(result.ok, result.error?.message).toBe(true);
+      const startResult = await startGame(sockets[0]);
+      expect(startResult.ok, startResult.error?.message).toBe(true);
+      const identityResults = await Promise.all(sockets.map((socket) => confirmIdentity(socket)));
+      for (const result of identityResults) expect(result.ok, result.error?.message).toBe(true);
+
+      const publicResponse = await request.get(`/api/rooms/${roomCode}/public`);
+      const publicBody = await publicResponse.json() as { data: { leaderSeat: number; missions: { teamSize: number }[] } };
+      const leaderSeat = publicBody.data.leaderSeat;
+      const teamSize = publicBody.data.missions[0].teamSize;
+      await page.evaluate(({ code, leaderCredentials }) => {
+        localStorage.setItem(`round-table-session:${code}`, JSON.stringify(leaderCredentials));
+      }, { code: roomCode, leaderCredentials: credentials[leaderSeat - 1] });
+      await page.goto(`/room/${roomCode}`);
+      await expect(page.getByRole("heading", { name: "第 1 轮 · 选择队员" })).toBeVisible();
+
+      const seatButtons = page.locator(".team-building-stage button.seat");
+      await expect(seatButtons).toHaveCount(playerCount);
+      await page.locator(`.team-building-stage button.seat[data-seat="${leaderSeat}"]`).click();
+      let selectedCount = 1;
+      for (let seat = 1; seat <= playerCount && selectedCount < teamSize; seat += 1) {
+        if (seat === leaderSeat) continue;
+        await page.locator(`.team-building-stage button.seat[data-seat="${seat}"]`).click();
+        selectedCount += 1;
+      }
+      await expect(page.locator(".team-building-stage .seat--selected")).toHaveCount(teamSize);
+      await expect(page.locator(".team-building-stage .seat__status")).toHaveCount(0);
+      await expect(page.locator(".team-building-stage .seat__check")).toHaveCount(0);
+      const leaderSeatPlaque = page.locator(`.team-building-stage .seat[data-seat="${leaderSeat}"]`);
+      await expect(leaderSeatPlaque.locator(".seat__leader")).toHaveText("队长");
+      await expect(leaderSeatPlaque.locator(".seat__current")).toHaveText("我");
+
+      for (const viewport of viewports) {
+        await page.setViewportSize(viewport);
+        await expectTeamBuildingLayout(page, playerCount, viewport);
+        await expectSeatNamesFullyVisible(page, {
+          seatSelector: ".team-building-stage .seat",
+          nameSelector: ".seat__name",
+          expectedNames: MOBILE_LONG_PLAYER_NAMES.slice(0, playerCount),
+          context: `${playerCount} 人个人组队页 ${viewport.width}×${viewport.height}`,
+          maxLines: 2,
+        });
+        await expectGameScreenFits(page, page.getByRole("button", { name: "确认队伍" }));
+        if (process.env.CAPTURE_VISUAL_QA && playerCount === 5 && viewport.width === 320) {
+          await page.screenshot({ path: "/tmp/avalon-team-building-long-320.png", fullPage: false });
+        }
+        if (process.env.CAPTURE_VISUAL_QA && playerCount === 10 && viewport.width === 390) {
+          await page.screenshot({ path: "/tmp/avalon-team-building-dense-390.png", fullPage: false });
+        }
+      }
+
+      const observerSeat = leaderSeat === 1 ? 2 : 1;
+      await page.evaluate(({ code, observerCredentials }) => {
+        localStorage.setItem(`round-table-session:${code}`, JSON.stringify(observerCredentials));
+      }, { code: roomCode, observerCredentials: credentials[observerSeat - 1] });
+      await page.reload();
+      await expect(page.getByRole("heading", { name: "第 1 轮 · 队长选人中" })).toBeVisible();
+      await expect(page.locator(".team-building-stage button.seat")).toHaveCount(0);
+      await expect(page.getByText("等待本轮队长确认队伍", { exact: true })).toBeVisible();
+
+      await page.evaluate(({ code, hostCredentials }) => {
+        localStorage.setItem(`round-table-session:${code}`, JSON.stringify(hostCredentials));
+      }, { code: roomCode, hostCredentials: credentials[0] });
+      await page.reload();
+      await expect(page.getByRole("button", { name: "查看我的身份" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "房主管理" })).toBeVisible();
+      for (const viewport of viewports) {
+        await page.setViewportSize(viewport);
+        const topbarMetrics = await page.evaluate(() => {
+          const code = document.querySelector<HTMLElement>(".player-topbar__room-code")!;
+          const actions = [...document.querySelectorAll<HTMLElement>(".player-topbar__actions button")];
+          const rects = actions.map((action) => action.getBoundingClientRect());
+          return {
+            roomCodeVisible: code.getBoundingClientRect().width > 0,
+            actionSizes: rects.map((rect) => ({ width: rect.width, height: rect.height })),
+            actionGap: rects[1].left - rects[0].right,
+          };
+        });
+        expect(topbarMetrics.roomCodeVisible).toBe(true);
+        expect(topbarMetrics.actionSizes).toHaveLength(2);
+        expect(Math.min(...topbarMetrics.actionSizes.map((size) => size.width))).toBeGreaterThanOrEqual(44);
+        expect(Math.min(...topbarMetrics.actionSizes.map((size) => size.height))).toBeGreaterThanOrEqual(44);
+        expect(topbarMetrics.actionGap).toBeGreaterThanOrEqual(8);
+      }
+    } finally {
+      sockets.forEach((socket) => socket.disconnect());
+    }
   }
 });
 
@@ -805,7 +941,9 @@ async function expectTeamBuildingLayout(
     const headingRect = toRect(required(".team-building-screen > .team-building-heading"));
     const tableElement = required(".team-building-stage .round-table");
     const tableRect = toRect(tableElement);
+    const ringRect = toRect(required(".team-building-stage .round-table__wood"));
     const seats = [...tableElement.querySelectorAll<HTMLElement>(".seat")];
+    const seatRects = seats.map(toRect);
     const leaderBadges = [...tableElement.querySelectorAll<HTMLElement>(".seat__leader")];
     const selectionMarks = [...tableElement.querySelectorAll<HTMLElement>(".seat__check")];
     const tableVisualRect = union([tableRect, ...seats.map(toRect), ...leaderBadges.map(toRect), ...selectionMarks.map(toRect)]);
@@ -826,6 +964,12 @@ async function expectTeamBuildingLayout(
     }
     if (intersects(tableVisualRect, draftRect)) overlaps.push("圆桌视觉范围-选人摘要");
     if (intersects(draftRect, actionRect)) overlaps.push("选人摘要-底部操作区");
+    const seatOverlaps: string[] = [];
+    for (let first = 0; first < seatRects.length; first += 1) {
+      for (let second = first + 1; second < seatRects.length; second += 1) {
+        if (intersects(seatRects[first], seatRects[second])) seatOverlaps.push(`${first + 1}-${second + 1}`);
+      }
+    }
 
     const seatNameFonts = [...tableElement.querySelectorAll<HTMLElement>(".seat__name")]
       .map((element) => Number.parseFloat(getComputedStyle(element).fontSize));
@@ -840,7 +984,13 @@ async function expectTeamBuildingLayout(
     return {
       overlaps,
       table: tableRect,
+      ring: ringRect,
+      layout: tableElement.dataset.layout,
       tableVisual: tableVisualRect,
+      seatOverlaps,
+      seatSizes: seatRects.map((rect) => ({ width: rect.width, height: rect.height })),
+      tableToSummaryGap: draftRect.top - tableVisualRect.bottom,
+      summaryToActionGap: actionRect.top - draftRect.bottom,
       seatCount: seats.length,
       leaderBadgeCount: leaderBadges.length,
       seatNameFonts,
@@ -853,15 +1003,22 @@ async function expectTeamBuildingLayout(
   expect(metrics.seatCount).toBe(expectedPlayerCount);
   expect(metrics.leaderBadgeCount).toBe(1);
   expect(metrics.overlaps, "组队页主要区域不应互相覆盖").toEqual([]);
-  expect(Math.abs(metrics.table.width - metrics.table.height), "手机圆桌必须保持正方形").toBeLessThanOrEqual(2);
-  expect(metrics.tableVisual.left).toBeGreaterThanOrEqual(metrics.table.left - 1);
-  expect(metrics.tableVisual.top).toBeGreaterThanOrEqual(metrics.table.top - 1);
-  expect(metrics.tableVisual.right).toBeLessThanOrEqual(metrics.table.right + 1);
-  expect(metrics.tableVisual.bottom).toBeLessThanOrEqual(metrics.table.bottom + 1);
+  expect(metrics.seatOverlaps, "手机座位铭牌不应互相覆盖").toEqual([]);
+  if (metrics.layout === "radial") {
+    expect(Math.abs(metrics.ring.width - metrics.ring.height), "手机圆桌环必须保持正圆").toBeLessThanOrEqual(2);
+  } else {
+    const denseRatio = metrics.ring.height / metrics.ring.width;
+    expect(denseRatio, "密集座位框的纵向比例应保持稳定").toBeGreaterThanOrEqual(1);
+    expect(denseRatio, "密集座位框不能被过度拉长").toBeLessThanOrEqual(1.65);
+  }
+  expect(metrics.table.width, "手机圆桌舞台应充分使用屏幕宽度").toBeGreaterThanOrEqual(expectedViewport.width * 0.9);
   expect(metrics.tableVisual.left).toBeGreaterThanOrEqual(-1);
   expect(metrics.tableVisual.top).toBeGreaterThanOrEqual(-1);
   expect(metrics.tableVisual.right).toBeLessThanOrEqual(metrics.viewport.width + 1);
   expect(metrics.tableVisual.bottom).toBeLessThanOrEqual(metrics.viewport.height + 1);
+  expect(metrics.tableToSummaryGap, "圆桌与选择摘要之间不能出现大块断层").toBeLessThanOrEqual(64);
+  expect(metrics.summaryToActionGap, "选择摘要与主按钮之间不能出现大块断层").toBeLessThanOrEqual(40);
+  expect(Math.min(...metrics.seatSizes.map((size) => size.height)), "座位铭牌触控高度不能小于 48 像素").toBeGreaterThanOrEqual(48);
   expect(Math.min(...metrics.seatNameFonts), "手机圆桌座位名不能小于 12 像素").toBeGreaterThanOrEqual(12);
   expect(Math.min(...metrics.buttonFonts), "组队页按钮文字不能小于 15 像素").toBeGreaterThanOrEqual(15);
 }
@@ -873,9 +1030,10 @@ async function expectSeatNamesFullyVisible(
     nameSelector: string;
     expectedNames?: string[];
     context: string;
+    maxLines?: number;
   },
 ): Promise<void> {
-  const metrics = await page.evaluate(({ seatSelector, nameSelector }) => {
+  const metrics = await page.evaluate(({ seatSelector, nameSelector, maxLines }) => {
     interface Rect {
       top: number;
       right: number;
@@ -924,6 +1082,8 @@ async function expectSeatNamesFullyVisible(
       const glyphRects = [...range.getClientRects()]
         .map(toRect)
         .filter((rect) => rect.width > 0 && rect.height > 0);
+      const lineCount = new Set(glyphRects.map((rect) => Math.round(rect.top))).size;
+      if (maxLines && lineCount > maxLines) issues.push(`${text} 使用了 ${lineCount} 行，超过 ${maxLines} 行`);
       if (text && glyphRects.length === 0) issues.push(`${text} 没有可见字形`);
       const ownSeat = seatRects[seatIndex];
       glyphRects.forEach((glyph, lineIndex) => {

@@ -73,8 +73,8 @@ export function PlayerRoom({ roomCode }: { roomCode: string }) {
       <header className={`player-topbar ${canReviewIdentity && me.isHost ? "player-topbar--crowded" : ""}`}>
         <Brand compact />
         <div className="player-topbar__room">
-          <span>{publicState.name}</span>
-          <b>{formatRoomCode(publicState.code)}</b>
+          <span className="player-topbar__room-name">{publicState.name}</span>
+          <b className="player-topbar__room-code">{formatRoomCode(publicState.code)}</b>
           {publicState.settings.mode === "experience" && <small>流程体验</small>}
         </div>
         <div className="player-topbar__actions">
@@ -297,7 +297,7 @@ function TeamBuilding({
   return (
     <main className="phase-screen team-building-screen">
       <header className="phase-heading team-building-heading">
-        <h1><span>第 {room.missionIndex + 1} 轮</span><i> · </i><strong>{privateState.canProposeTeam ? "队长选人" : "队长正在选人"}</strong></h1>
+        <h1><span>第 <b>{room.missionIndex + 1}</b> 轮</span><i>·</i><strong>{privateState.canProposeTeam ? "选择队员" : "队长选人中"}</strong></h1>
         <span>{privateState.canProposeTeam ? `请选择 ${mission.teamSize} 名队员` : `${leader?.nickname ?? "本轮队长"}正在选择 ${mission.teamSize} 名队员`}</span>
       </header>
       <div className="team-building-stage">
@@ -306,11 +306,13 @@ function TeamBuilding({
           players={room.players}
           playerCount={room.settings.playerCount}
           selectedIds={visibleSelection}
+          currentPlayerId={privateState.playerId}
           leaderSeat={room.leaderSeat}
           onToggle={privateState.canProposeTeam ? toggle : undefined}
+          showStatus={false}
         />
         <p className="team-draft-summary" aria-live="polite">
-          已选择 <b>{visibleSelection.length}</b> / {mission.teamSize}
+          已选 <b>{visibleSelection.length}</b> / {mission.teamSize}
         </p>
       </div>
       <div className="phase-action-dock">
